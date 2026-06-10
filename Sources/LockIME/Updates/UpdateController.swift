@@ -1,0 +1,124 @@
+import Foundation
+import LockIMEKit
+import Observation
+import Sparkle
+
+/// How a finished update check should be surfaced to the user.
+enum UpdateCheckOutcome {
+    case upToDate
+    case failed(UpdateFailure)
+}
+
+/// Owns the Sparkle updater wired to our custom user driver.
+///
+/// Presentation is deferred to the host (`AppState`) via callbacks so a check
+/// only opens the full window when an update actually exists; a clean "no
+/// update" (or an error) surfaces as a lightweight toast instead — and only for
+/// user-initiated checks, never for silent scheduled ones.
+@MainActor
+@Observable
+final class UpdateController {
+    let model = UpdateViewModel()
+
+    /// Show the full update window (an update was found / is in progress).
+    @ObservationIgnored var onPresentUpdateWindow: (() -> Void)?
+    /// Surface the result of a finished user-initiated check (native alert).
+    @ObservationIgnored var onCheckOutcome: ((UpdateCheckOutcome) -> Void)?
+
+    /// The version of an update found by a *scheduled* check and awaiting a
+    /// decision — drives the gentle "Update Available" menu affordance. `nil`
+    /// when no update is pending.
+    private(set) var pendingUpdateVersion: String?
+
+    /// When the updater last completed a check (Sparkle-tracked), for the
+    /// "Last checked" line in the Updates pane.
+    var lastCheckDate: Date? { updater?.lastUpdateCheckDate }
+
+    @ObservationIgnored private let driver: LockIMEUserDriver
+    @ObservationIgnored private let updaterDelegate = UpdaterDelegate()
+    @ObservationIgnored private var updater: SPUUpdater?
+
+    private(set) var canCheckForUpdates = false
+
+    init() {
+        driver = LockIMEUserDriver(model: model)
+        driver.onUpdateAvailable = { [weak self] in
+            self?.pendingUpdateVersion = nil
+            self?.onPresentUpdateWindow?()
+        }
+        driver.onGentleUpdateAvailable = { [weak self] version in
+            self?.pendingUpdateVersion = version
+        }
+        driver.onUserCheckFinished = { [weak self] outcome in self?.onCheckOutcome?(outcome) }
+        driver.onUpdateSessionEnded = { [weak self] in self?.pendingUpdateVersion = nil }
+    }
+
+    /// Build and start the updater. Fails gracefully if `SUPublicEDKey` is
+    /// missing/invalid (updates simply stay unavailable).
+    func start() {
+        let updater = SPUUpdater(
+            hostBundle: .main,
+            applicationBundle: .main,
+            userDriver: driver,
+            delegate: updaterDelegate
+        )
+        do {
+            try updater.start()
+            self.updater = updater
+            canCheckForUpdates = true
+            #if DEBUG
+            // Update lab (`make update-test-*`): kick off a user-style check
+            // right after launch so the scenario starts without a menu click.
+            if ProcessInfo.processInfo.environment["LOCKIME_UPDATE_CHECK_ON_LAUNCH"] == "1" {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(1))
+                    self?.checkForUpdates()
+                }
+            }
+            #endif
+        } catch {
+            canCheckForUpdates = false
+        }
+    }
+
+    /// A user-initiated check. If a scheduled check already found an update
+    /// (pending), open the window for it directly; otherwise start a fresh
+    /// check — nothing is shown until the result is known (an available update
+    /// opens the window; "up to date"/errors surface as a native alert).
+    func checkForUpdates() {
+        if pendingUpdateVersion != nil {
+            onPresentUpdateWindow?()
+        } else {
+            updater?.checkForUpdates()
+        }
+    }
+
+    var automaticallyChecksForUpdates: Bool {
+        get { updater?.automaticallyChecksForUpdates ?? false }
+        set { updater?.automaticallyChecksForUpdates = newValue }
+    }
+
+    /// Re-resolve the feed after the channel preference changes.
+    func channelDidChange() {
+        updater?.resetUpdateCycle()
+    }
+}
+
+/// Reads the beta-channel preference from `UserDefaults` (written by the Updates
+/// settings pane via `@AppStorage`) — no shared mutable state.
+final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        let usesBeta = UserDefaults.standard.bool(forKey: "usesBetaChannel")
+        return UpdateChannel.allowedChannels(for: .from(usesBeta: usesBeta))
+    }
+
+    #if DEBUG
+    /// Update lab (`make update-test-*`): point the updater at a loopback feed
+    /// without touching the shipped `SUFeedURL`. `nil` (the normal case) falls
+    /// back to Info.plist; release builds never consult the environment.
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        let feed = ProcessInfo.processInfo.environment["LOCKIME_UPDATE_FEED"]
+        return (feed?.isEmpty ?? true) ? nil : feed
+    }
+    #endif
+}

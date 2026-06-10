@@ -1,0 +1,190 @@
+name: Build & Publish
+
+# Reusable build+publish pipeline shared by release.yml (stable) and
+# nightly.yml (beta). Builds, tests, notarizes, staples, then tags the built
+# commit, publishes a GitHub Release with the zip, and updates the Sparkle
+# appcast on gh-pages. Callers compute the version (scripts/ci/compute_version.sh)
+# and pass it in; local builds stay at 0.0.0-development.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Display version (CFBundleShortVersionString), e.g. 1.2.3 or 1.2.3-beta.4
+        required: true
+        type: string
+      tag:
+        description: Git tag to create on the built commit, e.g. v1.2.3
+        required: true
+        type: string
+      channel:
+        description: Sparkle channel (stable | beta)
+        required: true
+        type: string
+      prerelease:
+        description: Mark the GitHub Release as a pre-release (pre-releases are never "Latest")
+        required: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build, notarize & publish ${{ inputs.version }}
+    runs-on: blacksmith-6vcpu-macos-latest
+    env:
+      SCHEME: LockIME
+      APP_NAME: LockIME
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp build number
+        id: stamp
+        # Build number = CFBundleVersion = Sparkle's sort key. Date-based and
+        # shared by both channels, so "newest build by wall-clock time wins"
+        # holds across stable and beta — a beta follower always lands on
+        # whichever build is actually newest, regardless of channel.
+        run: echo "build=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Select Xcode 26
+        run: |
+          if [ -d /Applications/Xcode_26.app ]; then sudo xcode-select -s /Applications/Xcode_26.app; fi
+          xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Import Developer ID certificate
+        env:
+          DEVELOPER_ID_CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+          DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: bash scripts/ci/import_cert.sh
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild -scheme "$SCHEME" -configuration Debug \
+            -derivedDataPath build/DerivedData \
+            -destination 'platform=macOS,arch=arm64' test | xcbeautify
+
+      - name: Archive (Release, Developer ID)
+        run: |
+          set -o pipefail
+          xcodebuild -scheme "$SCHEME" -configuration Release \
+            -derivedDataPath build/DerivedData \
+            -destination 'generic/platform=macOS' \
+            -archivePath "build/$APP_NAME.xcarchive" \
+            MARKETING_VERSION="${{ inputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.stamp.outputs.build }}" \
+            archive | xcbeautify
+
+      - name: Export archive
+        run: |
+          set -o pipefail
+          xcodebuild -exportArchive \
+            -archivePath "build/$APP_NAME.xcarchive" \
+            -exportOptionsPlist scripts/ci/ExportOptions.plist \
+            -exportPath build/export | xcbeautify
+          codesign --verify --deep --strict --verbose=2 "build/export/$APP_NAME.app"
+
+      - name: Notarize & staple
+        env:
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          APP="build/export/$APP_NAME.app"
+          echo "$APPLE_NOTARY_KEY" > "$RUNNER_TEMP/notary_key.p8"
+          # Zip for submission (notarytool wants a ditto archive).
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$RUNNER_TEMP/notary_key.p8" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER" \
+            --wait
+          xcrun stapler staple "$APP"
+          rm -f "$RUNNER_TEMP/notary_key.p8"
+
+      - name: Package distribution zip (after stapling)
+        id: package
+        run: |
+          set -euo pipefail
+          mkdir -p build/dist
+          APP="build/export/$APP_NAME.app"
+          ZIP="build/dist/$APP_NAME-${{ inputs.version }}.zip"
+          # Re-zip the STAPLED app (re-zipping after staple is safe).
+          ditto -c -k --keepParent "$APP" "$ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Build appcast (Sparkle, signs with EdDSA key)
+        env:
+          SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          GA="build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast"
+          echo "$SPARKLE_EDDSA_PRIVATE_KEY" > "$RUNNER_TEMP/eddsa_priv"
+          # Bring the existing appcast forward so prior versions are preserved.
+          # Read it from the gh-pages BRANCH, not the served Pages URL: the CDN
+          # caches for ~10 minutes and deploys asynchronously, and a transient
+          # fetch failure must hard-fail instead of silently truncating the
+          # feed to just this build. Only a genuinely missing branch/file
+          # (first release ever) starts fresh.
+          if git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null; then
+            git fetch --depth 1 origin gh-pages
+            if git cat-file -e FETCH_HEAD:appcast.xml 2>/dev/null; then
+              git show FETCH_HEAD:appcast.xml > build/dist/appcast.xml
+              echo "Seeded appcast from gh-pages"
+            else
+              echo "gh-pages has no appcast.xml yet — starting fresh"
+            fi
+          else
+            rc=$?
+            if [ "$rc" -ne 2 ]; then
+              echo "error: could not query origin for gh-pages (exit $rc)" >&2
+              exit 1
+            fi
+            echo "No gh-pages branch yet — starting fresh"
+          fi
+          # Args array is never empty at expansion time — expanding an empty
+          # array under set -u is fatal on the runners' bash 3.2.
+          GA_ARGS=(
+            --ed-key-file "$RUNNER_TEMP/eddsa_priv"
+            --download-url-prefix "https://github.com/oomol-lab/LockIME/releases/download/${{ inputs.tag }}/"
+          )
+          if [ "${{ inputs.channel }}" = "beta" ]; then GA_ARGS+=(--channel beta); fi
+          "$GA" "${GA_ARGS[@]}" build/dist
+          rm -f "$RUNNER_TEMP/eddsa_priv"
+
+      - name: Tag & publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          # Pin the tag to the commit that was actually built, not whatever
+          # the default branch points at by the time this step runs.
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.prerelease }}
+          files: ${{ steps.package.outputs.zip }}
+          generate_release_notes: true
+
+      - name: Stage appcast for gh-pages
+        # Publish ONLY the appcast. build/dist also holds the distribution
+        # zip, which the appcast never references (enclosure URLs point at
+        # GitHub Releases) — publishing it would grow gh-pages by one app
+        # bundle per build, forever.
+        run: |
+          set -euo pipefail
+          mkdir -p build/pages
+          cp build/dist/appcast.xml build/pages/appcast.xml
+
+      - name: Publish appcast to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: build/pages
+          publish_branch: gh-pages
+          keep_files: true

@@ -1,0 +1,35 @@
+# Generated Xcode project (regenerated from project.yml via `make gen`)
+*.xcodeproj
+*.xcworkspace
+
+# Build artifacts
+build/
+DerivedData/
+*.xcarchive
+*.app
+*.dmg
+*.zip
+
+# SPM
+.swiftpm/
+.build/
+Package.resolved
+
+# Sparkle signing — NEVER commit private keys
+*.private
+sparkle_private*
+dsa_priv*
+eddsa_priv*
+
+# macOS / Xcode user state
+.DS_Store
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Coverage / profiling artifacts
+*.profraw
+*.profdata
+
+# Python bytecode (scripts/update-lab/server.py)
+__pycache__/
