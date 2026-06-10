@@ -37,7 +37,7 @@ jobs:
       APP_NAME: LockIME
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Stamp build number
         id: stamp
@@ -53,7 +53,8 @@ jobs:
           xcodebuild -version
 
       - name: Install tools
-        run: brew install xcodegen xcbeautify
+        # xcbeautify ships with the macOS runner image; only xcodegen is missing.
+        run: brew install xcodegen
 
       - name: Import Developer ID certificate
         env:
@@ -161,7 +162,7 @@ jobs:
           rm -f "$RUNNER_TEMP/eddsa_priv"
 
       - name: Tag & publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag }}
           # Pin the tag to the commit that was actually built, not whatever
