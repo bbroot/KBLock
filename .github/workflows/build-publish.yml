@@ -161,6 +161,38 @@ jobs:
           "$GA" "${GA_ARGS[@]}" build/dist
           rm -f "$RUNNER_TEMP/eddsa_priv"
 
+      - name: Build DMG (from the stapled app)
+        id: dmg
+        # Built AFTER the appcast and into a directory generate_appcast never
+        # scans (build/dmg, not build/dist): the appcast must reference only the
+        # zip — the .dmg is a manual-download convenience, not an update channel.
+        run: |
+          set -euo pipefail
+          DMG="build/dmg/$APP_NAME-${{ inputs.version }}.dmg"
+          scripts/make-dmg.sh "build/export/$APP_NAME.app" "$DMG"
+          # Sign the image itself so Gatekeeper trusts the container, not just
+          # the (already-signed, already-stapled) app inside it.
+          codesign --force --sign "Developer ID Application" --timestamp "$DMG"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: Notarize & staple DMG
+        env:
+          MACOS_NOTARIZATION_KEY: ${{ secrets.MACOS_NOTARIZATION_KEY }}
+          MACOS_NOTARIZATION_KEY_ID: ${{ secrets.MACOS_NOTARIZATION_KEY_ID }}
+          MACOS_NOTARIZATION_ISSUER_ID: ${{ secrets.MACOS_NOTARIZATION_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.dmg }}"
+          echo "$MACOS_NOTARIZATION_KEY" > "$RUNNER_TEMP/notary_key.p8"
+          # A .dmg is itself a valid notarization submission — no wrapping zip.
+          xcrun notarytool submit "$DMG" \
+            --key "$RUNNER_TEMP/notary_key.p8" \
+            --key-id "$MACOS_NOTARIZATION_KEY_ID" \
+            --issuer "$MACOS_NOTARIZATION_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+          rm -f "$RUNNER_TEMP/notary_key.p8"
+
       - name: Tag & publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -169,7 +201,9 @@ jobs:
           # the default branch points at by the time this step runs.
           target_commitish: ${{ github.sha }}
           prerelease: ${{ inputs.prerelease }}
-          files: ${{ steps.package.outputs.zip }}
+          files: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.dmg.outputs.dmg }}
           generate_release_notes: true
 
       - name: Stage appcast for gh-pages

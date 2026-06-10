@@ -3,10 +3,11 @@ CONFIG      ?= Debug
 DERIVED     := build/DerivedData
 DEST        := platform=macOS,arch=arm64
 APP         := $(DERIVED)/Build/Products/$(CONFIG)/LockIME.app
+DMG         := build/dmg/LockIME.dmg
 XCB         := set -o pipefail && xcodebuild
 PRETTY      := | xcbeautify
 
-.PHONY: gen build run test archive clean kill \
+.PHONY: gen build run test archive dmg clean kill \
 	update-test-none update-test-download-fail update-test-extract-fail \
 	update-test-success update-test-stop
 
@@ -42,6 +43,11 @@ archive: gen
 	$(XCB) -scheme $(SCHEME) -configuration Release \
 		-derivedDataPath $(DERIVED) -destination 'generic/platform=macOS' \
 		-archivePath build/LockIME.xcarchive archive $(PRETTY)
+
+## Package the built app into a drag-to-install .dmg (CONFIG=Release for a
+## release-config bundle; the image is unsigned/unnotarized — CI handles that)
+dmg: build
+	scripts/make-dmg.sh "$(APP)" "$(DMG)"
 
 ## Terminate a running instance
 kill:

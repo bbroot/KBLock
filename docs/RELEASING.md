@@ -15,8 +15,8 @@ versions, and the workflows create them — you never push a tag by hand.
   `X.Y.Z-beta.N`, where `X.Y.Z` is the latest stable tag and `N` continues
   from the highest existing `-beta.*` tag for that base.
 - Every published build creates the matching `vX.Y.Z[-beta.N]` git tag and a
-  GitHub Release carrying the zip. Beta releases are marked **pre-release**,
-  so they are never shown as "Latest".
+  GitHub Release carrying both a zip and a notarized `.dmg`. Beta releases are
+  marked **pre-release**, so they are never shown as "Latest".
 - An explicit stable version must be **newer than the latest stable tag** —
   backfill releases are rejected by `compute_version.sh` (a newer-created
   release would steal "Latest", and the date-stamped build number would top
@@ -112,12 +112,21 @@ Create an empty `gh-pages` branch; the workflow publishes `appcast.xml` there
    `project.yml` stays at `0.0.0-development`.
 2. The workflow computes the version, builds, tests, archives (Developer ID,
    date-based build number), notarizes, staples, zips, runs `generate_appcast`
-   (with `--channel beta` for pre-release versions), then creates the
-   `vX.Y.Z` tag on the built commit, publishes the GitHub Release with the
-   zip, and updates `appcast.xml` on `gh-pages`.
+   (with `--channel beta` for pre-release versions), builds and notarizes a
+   `.dmg` from the stapled app, then creates the `vX.Y.Z` tag on the built
+   commit, publishes the GitHub Release with the zip **and** the dmg, and
+   updates `appcast.xml` on `gh-pages`.
 
 The signing order is strict: **codesign → notarize → staple → (re)zip**. The
 distribution zip is produced *after* stapling.
+
+The `.dmg` (drag-to-`/Applications`, built by `scripts/make-dmg.sh`) is a
+**manual-download convenience only** — Sparkle auto-updates still pull the zip,
+because the appcast references the zip exclusively. The dmg is built into
+`build/dmg/` (a directory `generate_appcast` never scans) *after* the appcast,
+then signed, notarized, and stapled on its own. Run `make dmg` to build the
+same image locally (unsigned/unnotarized; use `CONFIG=Release` for a
+release-config bundle).
 
 ## When a publish run fails
 
