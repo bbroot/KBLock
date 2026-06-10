@@ -38,6 +38,10 @@ jobs:
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history + tags so the release-notes step can diff
+          # <previous-tag>..HEAD when GitHub's generated notes list no PRs.
+          fetch-depth: 0
 
       - name: Stamp build number
         id: stamp
@@ -122,6 +126,56 @@ jobs:
           ditto -c -k --keepParent "$APP" "$ZIP"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes (single source for appcast + Release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Sparkle shows release notes ONLY from the appcast item — it never
+        # reads the GitHub Release body. generate_appcast embeds a release-note
+        # file that sits next to the archive with the SAME basename (so the zip
+        # build/dist/LockIME-<ver>.zip pairs with build/dist/LockIME-<ver>.html)
+        # as a CDATA <description>. That file must exist BEFORE "Build appcast"
+        # below — which runs before the Release is even created. So generate the
+        # notes once here with GitHub's own generator, render them to HTML for
+        # the appcast, and reuse the same markdown for the Release body further
+        # down: one source of truth, no drift between the update window and the
+        # Release page.
+        run: |
+          set -euo pipefail
+          # The tag does not exist yet (it is created in the publish step), so
+          # pin the diff to the built commit; GitHub auto-selects the previous
+          # tag.
+          gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ inputs.tag }}" \
+            -f target_commitish="${{ github.sha }}" \
+            --jq .body > build/release-notes.md
+          # generate-notes lists only merged PRs under "What's Changed" (each a
+          # "* " bullet). When changes land straight on the branch that section
+          # is empty and the body is just the "Full Changelog" link — fall back
+          # to a per-commit list so the notes are never effectively empty.
+          if ! grep -q '^\* ' build/release-notes.md; then
+            # Reuse the exact base GitHub chose for its compare link so the
+            # commit range matches the "Full Changelog" diff. Empty (→ whole
+            # history) only for the very first release, which has no prior tag.
+            PREV="$(sed -nE 's#.*/compare/(.+)\.\.\..*#\1#p' build/release-notes.md | head -1)"
+            if [ -n "$PREV" ]; then RANGE="$PREV..${{ github.sha }}"; else RANGE="${{ github.sha }}"; fi
+            COMMITS="$(git log --reverse --no-merges --pretty='format:* %s (`%h`)' "$RANGE")"
+            if [ -n "$COMMITS" ]; then
+              { printf "## What's Changed\n\n%s\n\n" "$COMMITS"; cat build/release-notes.md; } \
+                > build/release-notes.md.new
+              mv build/release-notes.md.new build/release-notes.md
+              echo "No PRs in $RANGE — wrote $(printf '%s\n' "$COMMITS" | grep -c '^\* ') commit lines"
+            fi
+          fi
+          # Render to an HTML *fragment* with GitHub's GFM renderer (linkifies
+          # PR/@user/#issue refs, matches the Release page). The fragment has no
+          # DOCTYPE/<body>, so generate_appcast embeds it inline as CDATA rather
+          # than emitting a sparkle:releaseNotesLink that would need hosting.
+          HTML="build/dist/$APP_NAME-${{ inputs.version }}.html"
+          jq -Rs --arg ctx "${{ github.repository }}" \
+            '{text: ., mode: "gfm", context: $ctx}' build/release-notes.md \
+            | gh api --method POST /markdown --input - > "$HTML"
+          echo "Release notes: $(wc -l < build/release-notes.md | tr -d ' ') md lines → $(wc -c < "$HTML" | tr -d ' ') html bytes"
+
       - name: Build appcast (Sparkle, signs with EdDSA key)
         env:
           SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
@@ -155,6 +209,11 @@ jobs:
           # array under set -u is fatal on the runners' bash 3.2.
           GA_ARGS=(
             --ed-key-file "$RUNNER_TEMP/eddsa_priv"
+            # Force the LockIME-<ver>.html staged above into an inline CDATA
+            # <description> for this new item (it is a fragment, so this is also
+            # the default — but be explicit so a future full-document note can't
+            # silently flip to an un-hosted releaseNotesLink).
+            --embed-release-notes
             --download-url-prefix "https://github.com/oomol-lab/LockIME/releases/download/${{ inputs.tag }}/"
           )
           if [ "${{ inputs.channel }}" = "beta" ]; then GA_ARGS+=(--channel beta); fi
@@ -204,7 +263,11 @@ jobs:
           files: |
             ${{ steps.package.outputs.zip }}
             ${{ steps.dmg.outputs.dmg }}
-          generate_release_notes: true
+          # Reuse the exact notes embedded in the appcast (generated above) so
+          # the Release page and the Sparkle update window never disagree.
+          # (Replaces generate_release_notes: true, which would regenerate them
+          # independently and only populate the Release page, not the appcast.)
+          body_path: build/release-notes.md
 
       - name: Stage appcast for gh-pages
         # Publish ONLY the appcast. build/dist also holds the distribution

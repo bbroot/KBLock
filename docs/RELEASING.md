@@ -120,6 +120,28 @@ Create an empty `gh-pages` branch; the workflow publishes `appcast.xml` there
 The signing order is strict: **codesign → notarize → staple → (re)zip**. The
 distribution zip is produced *after* stapling.
 
+### Release notes
+
+Sparkle shows the update window's release notes from the **appcast item**, not
+from the GitHub Release body — the two are separate channels. Before
+`generate_appcast` runs, the workflow generates the notes once
+(`gh api …/releases/generate-notes` on the built commit), renders them to an
+HTML fragment with GitHub's GFM renderer, and writes
+`build/dist/LockIME-<version>.html`. `generate_appcast` matches that file to the
+zip by basename and embeds it inline as a CDATA `<description>`
+(`--embed-release-notes`), so the notes travel with the appcast and need no
+hosting. The same markdown is reused verbatim as the GitHub Release `body`, so
+the Release page and the update window can never disagree.
+
+`generate-notes` lists **merged pull requests** under "What's Changed". When a
+release contains no PRs (changes pushed straight to the branch), that section is
+empty, so the workflow falls back to a per-commit list built from
+`git log <previous-tag>..HEAD` (the previous tag is parsed from GitHub's own
+"Full Changelog" compare link, so the two always cover the same range). This is
+why the build checks out with `fetch-depth: 0` — the shallow default has no tags
+or history to diff. Landing changes via PRs still yields the richer
+PR-titled notes.
+
 The `.dmg` (drag-to-`/Applications`, built by `scripts/make-dmg.sh`) is a
 **manual-download convenience only** — Sparkle auto-updates still pull the zip,
 because the appcast references the zip exclusively. The dmg is built into
