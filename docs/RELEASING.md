@@ -78,13 +78,14 @@ the matching **private** key from the keychain (generated with Sparkle's
 Export the **Developer ID Application** certificate as a `.p12` and base64-encode it:
 
 ```sh
-base64 -i DeveloperID.p12 | pbcopy   # → DEVELOPER_ID_CERT_BASE64
+base64 -i DeveloperID.p12 | pbcopy   # → MACOS_CERTIFICATE
 ```
 
 ### 3. Notarization key
 
 Create an App Store Connect API key (Developer ID notarization) and note the
-key ID, issuer ID, and the `.p8` contents.
+key ID, issuer ID, and the `.p8` contents — they become `MACOS_NOTARIZATION_KEY`,
+`MACOS_NOTARIZATION_KEY_ID`, and `MACOS_NOTARIZATION_ISSUER_ID`.
 
 ### 4. gh-pages branch
 
@@ -95,12 +96,12 @@ Create an empty `gh-pages` branch; the workflow publishes `appcast.xml` there
 
 | Secret | Purpose |
 |---|---|
-| `DEVELOPER_ID_CERT_BASE64` | base64 of the Developer ID `.p12` |
-| `DEVELOPER_ID_CERT_PASSWORD` | password for the `.p12` |
+| `MACOS_CERTIFICATE` | base64 of the Developer ID `.p12` |
+| `MACOS_CERTIFICATE_PWD` | password for the `.p12` |
 | `APPLE_TEAM_ID` | `PWJ9VF7HHT` |
-| `APPLE_NOTARY_KEY` | contents of the App Store Connect `.p8` |
-| `APPLE_NOTARY_KEY_ID` | API key ID |
-| `APPLE_NOTARY_ISSUER` | API issuer ID |
+| `MACOS_NOTARIZATION_KEY` | contents of the App Store Connect `.p8` |
+| `MACOS_NOTARIZATION_KEY_ID` | API key ID |
+| `MACOS_NOTARIZATION_ISSUER_ID` | API issuer ID |
 | `SPARKLE_EDDSA_PRIVATE_KEY` | exported Sparkle private key |
 
 ## Cutting a release

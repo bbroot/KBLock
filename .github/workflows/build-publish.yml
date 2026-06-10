@@ -56,10 +56,10 @@ jobs:
         # xcbeautify ships with the macOS runner image; only xcodegen is missing.
         run: brew install xcodegen
 
-      - name: Import Developer ID certificate
+      - name: Import macOS signing certificate
         env:
-          DEVELOPER_ID_CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
-          DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
         run: bash scripts/ci/import_cert.sh
 
       - name: Generate project
@@ -94,19 +94,19 @@ jobs:
 
       - name: Notarize & staple
         env:
-          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
-          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          MACOS_NOTARIZATION_KEY: ${{ secrets.MACOS_NOTARIZATION_KEY }}
+          MACOS_NOTARIZATION_KEY_ID: ${{ secrets.MACOS_NOTARIZATION_KEY_ID }}
+          MACOS_NOTARIZATION_ISSUER_ID: ${{ secrets.MACOS_NOTARIZATION_ISSUER_ID }}
         run: |
           set -euo pipefail
           APP="build/export/$APP_NAME.app"
-          echo "$APPLE_NOTARY_KEY" > "$RUNNER_TEMP/notary_key.p8"
+          echo "$MACOS_NOTARIZATION_KEY" > "$RUNNER_TEMP/notary_key.p8"
           # Zip for submission (notarytool wants a ditto archive).
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
           xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
             --key "$RUNNER_TEMP/notary_key.p8" \
-            --key-id "$APPLE_NOTARY_KEY_ID" \
-            --issuer "$APPLE_NOTARY_ISSUER" \
+            --key-id "$MACOS_NOTARIZATION_KEY_ID" \
+            --issuer "$MACOS_NOTARIZATION_ISSUER_ID" \
             --wait
           xcrun stapler staple "$APP"
           rm -f "$RUNNER_TEMP/notary_key.p8"

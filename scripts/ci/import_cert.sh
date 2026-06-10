@@ -2,34 +2,36 @@
 # Import the Developer ID Application certificate into a temporary keychain for
 # CI signing. Reads base64 + password from the environment.
 #
-#   DEVELOPER_ID_CERT_BASE64   base64 of the .p12
-#   DEVELOPER_ID_CERT_PASSWORD password for the .p12
+#   MACOS_CERTIFICATE       base64 of the .p12
+#   MACOS_CERTIFICATE_PWD   password for the .p12
 #
 # Leaves a keychain that codesign can use for the rest of the job.
 set -euo pipefail
 
-: "${DEVELOPER_ID_CERT_BASE64:?missing}"
-: "${DEVELOPER_ID_CERT_PASSWORD:?missing}"
+: "${MACOS_CERTIFICATE:?missing}"
+: "${MACOS_CERTIFICATE_PWD:?missing}"
 
 KEYCHAIN="$RUNNER_TEMP/lockime-signing.keychain-db"
 KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
-CERT_PATH="$RUNNER_TEMP/developer_id.p12"
+CERT_PATH="$RUNNER_TEMP/certificate.p12"
 
-echo "$DEVELOPER_ID_CERT_BASE64" | base64 --decode > "$CERT_PATH"
+echo -n "$MACOS_CERTIFICATE" | base64 --decode -o "$CERT_PATH"
 
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 security set-keychain-settings -lut 21600 "$KEYCHAIN"
 security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
-security import "$CERT_PATH" -P "$DEVELOPER_ID_CERT_PASSWORD" \
+security import "$CERT_PATH" -P "$MACOS_CERTIFICATE_PWD" \
 	-A -t cert -f pkcs12 -k "$KEYCHAIN"
 
-# Allow codesign to use the key without an interactive prompt.
+# Allow codesign to use the signing key without an interactive prompt.
 security set-key-partition-list -S apple-tool:,apple:,codesign: \
-	-k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+	-s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
 
-# Put our keychain first in the search list so codesign finds the identity.
-security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+# Put our keychain first in the user search list while PRESERVING the keychains
+# already there (login.keychain-db et al.) — replacing the list wholesale can
+# strip a keychain a later step relies on.
+security list-keychain -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)
 
 rm -f "$CERT_PATH"
 echo "Imported Developer ID certificate into $KEYCHAIN"
