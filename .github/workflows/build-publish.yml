@@ -131,14 +131,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Sparkle shows release notes ONLY from the appcast item — it never
         # reads the GitHub Release body. generate_appcast embeds a release-note
-        # file that sits next to the archive with the SAME basename (so the zip
-        # build/dist/LockIME-<ver>.zip pairs with build/dist/LockIME-<ver>.html)
-        # as a CDATA <description>. That file must exist BEFORE "Build appcast"
-        # below — which runs before the Release is even created. So generate the
-        # notes once here with GitHub's own generator, render them to HTML for
-        # the appcast, and reuse the same markdown for the Release body further
-        # down: one source of truth, no drift between the update window and the
-        # Release page.
+        # file that sits next to the archive with the SAME basename and a
+        # .md/.html/.txt extension (so build/dist/LockIME-<ver>.zip pairs with
+        # build/dist/LockIME-<ver>.md) as a CDATA <description>. That file must
+        # exist BEFORE "Build appcast" below — which runs before the Release is
+        # even created. So generate the notes once here with GitHub's own
+        # generator and reuse the SAME markdown for both surfaces: the appcast
+        # description and the Release body further down. One source of truth, no
+        # drift between the update window and the Release page.
+        #
+        # Embed MARKDOWN, not HTML. The update window renders the description
+        # with swift-markdown-ui (a Markdown renderer, not a WebView — see
+        # UpdateWindowView), so a .md file makes generate_appcast tag it
+        # sparkle:format="markdown" and embed it verbatim, and the app styles it
+        # natively. A GFM-pre-rendered HTML fragment would instead surface as
+        # raw "<h2 dir=…>" tags in that view.
         run: |
           set -euo pipefail
           # The tag does not exist yet (it is created in the publish step), so
@@ -166,15 +173,12 @@ jobs:
               echo "No PRs in $RANGE — wrote $(printf '%s\n' "$COMMITS" | grep -c '^\* ') commit lines"
             fi
           fi
-          # Render to an HTML *fragment* with GitHub's GFM renderer (linkifies
-          # PR/@user/#issue refs, matches the Release page). The fragment has no
-          # DOCTYPE/<body>, so generate_appcast embeds it inline as CDATA rather
-          # than emitting a sparkle:releaseNotesLink that would need hosting.
-          HTML="build/dist/$APP_NAME-${{ inputs.version }}.html"
-          jq -Rs --arg ctx "${{ github.repository }}" \
-            '{text: ., mode: "gfm", context: $ctx}' build/release-notes.md \
-            | gh api --method POST /markdown --input - > "$HTML"
-          echo "Release notes: $(wc -l < build/release-notes.md | tr -d ' ') md lines → $(wc -c < "$HTML" | tr -d ' ') html bytes"
+          # Stage the markdown next to the archive (same basename, .md) so the
+          # next step's generate_appcast --embed-release-notes inlines it as a
+          # CDATA <description sparkle:format="markdown">. No hosting and no GFM
+          # pre-render: the app's MarkdownUI view linkifies and styles it.
+          cp build/release-notes.md "build/dist/$APP_NAME-${{ inputs.version }}.md"
+          echo "Release notes: $(wc -l < build/release-notes.md | tr -d ' ') md lines staged for appcast + Release"
 
       - name: Build appcast (Sparkle, signs with EdDSA key)
         env:
@@ -209,10 +213,11 @@ jobs:
           # array under set -u is fatal on the runners' bash 3.2.
           GA_ARGS=(
             --ed-key-file "$RUNNER_TEMP/eddsa_priv"
-            # Force the LockIME-<ver>.html staged above into an inline CDATA
-            # <description> for this new item (it is a fragment, so this is also
-            # the default — but be explicit so a future full-document note can't
-            # silently flip to an un-hosted releaseNotesLink).
+            # REQUIRED: inline the LockIME-<ver>.md staged above as a CDATA
+            # <description sparkle:format="markdown">. Markdown notes are NOT
+            # embedded by default (only DOCTYPE/body-less HTML fragments are) —
+            # without this flag generate_appcast would emit a
+            # sparkle:releaseNotesLink pointing at an un-hosted .md (404).
             --embed-release-notes
             --download-url-prefix "https://github.com/oomol-lab/LockIME/releases/download/${{ inputs.tag }}/"
           )

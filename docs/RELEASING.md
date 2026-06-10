@@ -125,13 +125,16 @@ distribution zip is produced *after* stapling.
 Sparkle shows the update window's release notes from the **appcast item**, not
 from the GitHub Release body — the two are separate channels. Before
 `generate_appcast` runs, the workflow generates the notes once
-(`gh api …/releases/generate-notes` on the built commit), renders them to an
-HTML fragment with GitHub's GFM renderer, and writes
-`build/dist/LockIME-<version>.html`. `generate_appcast` matches that file to the
-zip by basename and embeds it inline as a CDATA `<description>`
-(`--embed-release-notes`), so the notes travel with the appcast and need no
-hosting. The same markdown is reused verbatim as the GitHub Release `body`, so
-the Release page and the update window can never disagree.
+(`gh api …/releases/generate-notes` on the built commit) and writes the markdown
+to `build/dist/LockIME-<version>.md`. `generate_appcast` matches that file to the
+zip by basename and embeds it inline as a CDATA
+`<description sparkle:format="markdown">` (`--embed-release-notes` is required —
+markdown notes are not auto-embedded the way HTML fragments are), so the notes
+travel with the appcast and need no hosting. The update window renders that
+markdown natively with swift-markdown-ui — embedding **markdown, not a
+pre-rendered HTML fragment**, which that view would show as raw tags. The same
+file is reused verbatim as the GitHub Release `body`, so the Release page and the
+update window can never disagree.
 
 `generate-notes` lists **merged pull requests** under "What's Changed". When a
 release contains no PRs (changes pushed straight to the branch), that section is
