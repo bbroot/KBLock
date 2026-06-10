@@ -98,8 +98,15 @@ final class UpdateController {
         set { updater?.automaticallyChecksForUpdates = newValue }
     }
 
-    /// Re-resolve the feed after the channel preference changes.
+    /// Re-resolve the feed after the channel preference changes. Any update the
+    /// previous channel surfaced is now stale: reply-dismiss the gentle prompt
+    /// still awaiting a choice (so Sparkle isn't left hanging on an orphaned
+    /// reply) and drop the "update available" indicator. Only a fresh check on
+    /// the newly selected channel re-badges it — and only if that channel
+    /// actually has an update.
     func channelDidChange() {
+        model.dismissReply()
+        pendingUpdateVersion = nil
         updater?.resetUpdateCycle()
     }
 }
