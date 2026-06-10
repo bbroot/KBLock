@@ -16,10 +16,14 @@ struct MenuBarView: View {
             set: { state.setMasterEnabled($0) }
         )
         let pendingUpdate = state.updateController.pendingUpdateVersion
+        // The menu is a native NSMenu (.menuBarExtraStyle(.menu)) — an AppKit
+        // surface that bypasses the injected `\.locale`, so resolve the status
+        // word through `loc` (app's chosen language) rather than a live
+        // LocalizedStringKey. The source name stays verbatim.
+        let status = state.loc(state.isLocked ? "Locked" : "Unlocked")
 
         // Status header — current lock state + source, non-interactive.
-        Text(state.isLocked ? "Locked" : "Unlocked")
-            + Text(verbatim: " · \(state.currentSourceName)")
+        Text(verbatim: "\(status) · \(state.currentSourceName)")
 
         Divider()
 

@@ -36,8 +36,10 @@ struct ActivationLogPane: View {
                         Text(Self.reasonLabel(entry.reasonRaw))
                     }
                     TableColumn("Duration") { entry in
-                        (Text(entry.durationMs, format: .number.precision(.fractionLength(1)))
-                            + Text(verbatim: " ms"))
+                        // " ms" stays verbatim (a unit, never localized); the
+                        // number formats in the app's chosen language, not the
+                        // system locale.
+                        Text(verbatim: "\(entry.durationMs.formatted(.number.precision(.fractionLength(1)).locale(state.locale))) ms")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
