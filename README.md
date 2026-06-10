@@ -1,6 +1,16 @@
 # LockIME
 
+<div align="center">
+
 **English** · [简体中文](README.zh-CN.md)
+
+[![Latest release](https://img.shields.io/github/v/release/oomol-lab/LockIME?sort=semver&color=3A5BD9)](https://github.com/oomol-lab/LockIME/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/oomol-lab/LockIME/ci.yml?branch=main&label=CI)](https://github.com/oomol-lab/LockIME/actions/workflows/ci.yml)
+[![License: GPL-3.0](https://img.shields.io/github/license/oomol-lab/LockIME?color=3A5BD9)](LICENSE)
+[![macOS 26+](https://img.shields.io/badge/macOS-26%2B%20Tahoe-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![Swift 6.0](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)](https://swift.org)
+
+</div>
 
 A macOS menu-bar app that **locks your keyboard input source**. Whenever you (or
 another app) switch input methods, LockIME immediately switches back to the locked
