@@ -2,9 +2,21 @@ name: Build & Publish
 
 # Reusable build+publish pipeline shared by release.yml (stable) and
 # nightly.yml (beta). Builds, tests, notarizes, staples, then tags the built
-# commit, publishes a GitHub Release with the zip, and updates the Sparkle
-# appcast on gh-pages. Callers compute the version (scripts/ci/compute_version.sh)
-# and pass it in; local builds stay at 0.0.0-development.
+# commit, publishes a GitHub Release with the zips/dmgs, and updates the
+# Sparkle appcasts on gh-pages. Callers compute the version
+# (scripts/ci/compute_version.sh) and pass it in; local builds stay at
+# 0.0.0-development.
+#
+# Every release ships one app PER ARCHITECTURE (arm64 + x86_64), never a
+# universal binary (download size), each with its own Sparkle feed:
+#   appcast.xml         — arm64. This is the URL baked into every shipped
+#                         build's Info.plist (including all pre-x86_64
+#                         releases, which were arm64-only), so it must keep
+#                         serving arm64-only entries forever.
+#   appcast-x86_64.xml  — x86_64; pinned at compile time via #if arch in
+#                         UpdaterDelegate.feedURLString(for:).
+# Cross-arch updates are unsupported by design: each binary can only ever see
+# its own architecture's feed.
 on:
   workflow_call:
     inputs:
@@ -76,25 +88,41 @@ jobs:
             -derivedDataPath build/DerivedData \
             -destination 'platform=macOS,arch=arm64' test | xcbeautify
 
-      - name: Archive (Release, Developer ID)
+      - name: Archive (Release, Developer ID, one archive per arch)
+        # ARCHS comes from the command line (project.yml pins arm64 for local
+        # builds); both archives share DerivedData — intermediates are keyed
+        # by arch, and the SPM graph resolves once.
         run: |
-          set -o pipefail
-          xcodebuild -scheme "$SCHEME" -configuration Release \
-            -derivedDataPath build/DerivedData \
-            -destination 'generic/platform=macOS' \
-            -archivePath "build/$APP_NAME.xcarchive" \
-            MARKETING_VERSION="${{ inputs.version }}" \
-            CURRENT_PROJECT_VERSION="${{ steps.stamp.outputs.build }}" \
-            archive | xcbeautify
+          set -euo pipefail
+          for ARCH in arm64 x86_64; do
+            xcodebuild -scheme "$SCHEME" -configuration Release \
+              -derivedDataPath build/DerivedData \
+              -destination 'generic/platform=macOS' \
+              -archivePath "build/$APP_NAME-$ARCH.xcarchive" \
+              MARKETING_VERSION="${{ inputs.version }}" \
+              CURRENT_PROJECT_VERSION="${{ steps.stamp.outputs.build }}" \
+              ARCHS="$ARCH" ONLY_ACTIVE_ARCH=NO \
+              archive | xcbeautify
+          done
 
-      - name: Export archive
+      - name: Export archives
         run: |
-          set -o pipefail
-          xcodebuild -exportArchive \
-            -archivePath "build/$APP_NAME.xcarchive" \
-            -exportOptionsPlist scripts/ci/ExportOptions.plist \
-            -exportPath build/export | xcbeautify
-          codesign --verify --deep --strict --verbose=2 "build/export/$APP_NAME.app"
+          set -euo pipefail
+          for ARCH in arm64 x86_64; do
+            xcodebuild -exportArchive \
+              -archivePath "build/$APP_NAME-$ARCH.xcarchive" \
+              -exportOptionsPlist scripts/ci/ExportOptions.plist \
+              -exportPath "build/export-$ARCH" | xcbeautify
+            APP="build/export-$ARCH/$APP_NAME.app"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            # The whole point of per-arch apps: refuse to ship a bundle whose
+            # main binary or embedded Sparkle is fat or the wrong arch (the
+            # thin-frameworks build phase must have stripped the other slice).
+            test "$(lipo -archs "$APP/Contents/MacOS/$APP_NAME")" = "$ARCH"
+            # Via the framework's top-level symlink, so a future Sparkle
+            # version-letter bump can't turn this into a confusing ENOENT.
+            test "$(lipo -archs "$APP/Contents/Frameworks/Sparkle.framework/Sparkle")" = "$ARCH"
+          done
 
       - name: Notarize & staple
         env:
@@ -103,28 +131,32 @@ jobs:
           MACOS_NOTARIZATION_ISSUER_ID: ${{ secrets.MACOS_NOTARIZATION_ISSUER_ID }}
         run: |
           set -euo pipefail
-          APP="build/export/$APP_NAME.app"
           echo "$MACOS_NOTARIZATION_KEY" > "$RUNNER_TEMP/notary_key.p8"
-          # Zip for submission (notarytool wants a ditto archive).
-          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
-            --key "$RUNNER_TEMP/notary_key.p8" \
-            --key-id "$MACOS_NOTARIZATION_KEY_ID" \
-            --issuer "$MACOS_NOTARIZATION_ISSUER_ID" \
-            --wait
-          xcrun stapler staple "$APP"
+          for ARCH in arm64 x86_64; do
+            APP="build/export-$ARCH/$APP_NAME.app"
+            # Zip for submission (notarytool wants a ditto archive).
+            ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize-$ARCH.zip"
+            xcrun notarytool submit "$RUNNER_TEMP/notarize-$ARCH.zip" \
+              --key "$RUNNER_TEMP/notary_key.p8" \
+              --key-id "$MACOS_NOTARIZATION_KEY_ID" \
+              --issuer "$MACOS_NOTARIZATION_ISSUER_ID" \
+              --wait
+            xcrun stapler staple "$APP"
+          done
           rm -f "$RUNNER_TEMP/notary_key.p8"
 
-      - name: Package distribution zip (after stapling)
-        id: package
+      - name: Package distribution zips (after stapling)
+        # One dist directory per arch: each is a separate generate_appcast
+        # scan root, so a feed can only ever see its own architecture's
+        # archive — cross-arch entries are structurally impossible.
         run: |
           set -euo pipefail
-          mkdir -p build/dist
-          APP="build/export/$APP_NAME.app"
-          ZIP="build/dist/$APP_NAME-${{ inputs.version }}.zip"
-          # Re-zip the STAPLED app (re-zipping after staple is safe).
-          ditto -c -k --keepParent "$APP" "$ZIP"
-          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          for ARCH in arm64 x86_64; do
+            mkdir -p "build/dist-$ARCH"
+            APP="build/export-$ARCH/$APP_NAME.app"
+            # Re-zip the STAPLED app (re-zipping after staple is safe).
+            ditto -c -k --keepParent "$APP" "build/dist-$ARCH/$APP_NAME-${{ inputs.version }}-$ARCH.zip"
+          done
 
       - name: Generate release notes (single source for appcast + Release)
         env:
@@ -132,9 +164,10 @@ jobs:
         # Sparkle shows release notes ONLY from the appcast item — it never
         # reads the GitHub Release body. generate_appcast embeds a release-note
         # file that sits next to the archive with the SAME basename and a
-        # .md/.html/.txt extension (so build/dist/LockIME-<ver>.zip pairs with
-        # build/dist/LockIME-<ver>.md) as a CDATA <description>. That file must
-        # exist BEFORE "Build appcast" below — which runs before the Release is
+        # .md/.html/.txt extension (so build/dist-<arch>/LockIME-<ver>-<arch>.zip
+        # pairs with build/dist-<arch>/LockIME-<ver>-<arch>.md) as a CDATA
+        # <description>. That file must
+        # exist BEFORE "Build appcasts" below — which runs before the Release is
         # even created. So generate the notes once here with GitHub's own
         # generator and reuse the SAME markdown for both surfaces: the appcast
         # description and the Release body further down. One source of truth, no
@@ -173,88 +206,104 @@ jobs:
               echo "No PRs in $RANGE — wrote $(printf '%s\n' "$COMMITS" | grep -c '^\* ') commit lines"
             fi
           fi
-          # Stage the markdown next to the archive (same basename, .md) so the
-          # next step's generate_appcast --embed-release-notes inlines it as a
-          # CDATA <description sparkle:format="markdown">. No hosting and no GFM
-          # pre-render: the app's MarkdownUI view linkifies and styles it.
-          cp build/release-notes.md "build/dist/$APP_NAME-${{ inputs.version }}.md"
-          echo "Release notes: $(wc -l < build/release-notes.md | tr -d ' ') md lines staged for appcast + Release"
+          # Stage the markdown next to each arch's archive (same basename,
+          # .md) so the next step's generate_appcast --embed-release-notes
+          # inlines it as a CDATA <description sparkle:format="markdown">. No
+          # hosting and no GFM pre-render: the app's MarkdownUI view linkifies
+          # and styles it. Both feeds carry the same notes.
+          for ARCH in arm64 x86_64; do
+            cp build/release-notes.md "build/dist-$ARCH/$APP_NAME-${{ inputs.version }}-$ARCH.md"
+          done
+          echo "Release notes: $(wc -l < build/release-notes.md | tr -d ' ') md lines staged for appcasts + Release"
 
-      - name: Build appcast (Sparkle, signs with EdDSA key)
+      - name: Build appcasts (Sparkle, signs with EdDSA key)
         env:
           SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           GA="build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast"
           echo "$SPARKLE_EDDSA_PRIVATE_KEY" > "$RUNNER_TEMP/eddsa_priv"
-          # Bring the existing appcast forward so prior versions are preserved.
-          # Read it from the gh-pages BRANCH, not the served Pages URL: the CDN
-          # caches for ~10 minutes and deploys asynchronously, and a transient
-          # fetch failure must hard-fail instead of silently truncating the
-          # feed to just this build. Only a genuinely missing branch/file
-          # (first release ever) starts fresh.
+          # Bring the existing feeds forward so prior versions are preserved.
+          # Read them from the gh-pages BRANCH, not the served Pages URL: the
+          # CDN caches for ~10 minutes and deploys asynchronously, and a
+          # transient fetch failure must hard-fail instead of silently
+          # truncating a feed to just this build. Only a genuinely missing
+          # branch/file starts that feed fresh (the first release ever, or the
+          # first x86_64 release seeding its brand-new feed).
           if git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null; then
             git fetch --depth 1 origin gh-pages
-            if git cat-file -e FETCH_HEAD:appcast.xml 2>/dev/null; then
-              git show FETCH_HEAD:appcast.xml > build/dist/appcast.xml
-              echo "Seeded appcast from gh-pages"
-            else
-              echo "gh-pages has no appcast.xml yet — starting fresh"
-            fi
+            HAVE_PAGES=true
           else
             rc=$?
             if [ "$rc" -ne 2 ]; then
               echo "error: could not query origin for gh-pages (exit $rc)" >&2
               exit 1
             fi
-            echo "No gh-pages branch yet — starting fresh"
+            echo "No gh-pages branch yet — all feeds start fresh"
+            HAVE_PAGES=false
           fi
-          # Args array is never empty at expansion time — expanding an empty
-          # array under set -u is fatal on the runners' bash 3.2.
-          GA_ARGS=(
-            --ed-key-file "$RUNNER_TEMP/eddsa_priv"
-            # REQUIRED: inline the LockIME-<ver>.md staged above as a CDATA
-            # <description sparkle:format="markdown">. Markdown notes are NOT
-            # embedded by default (only DOCTYPE/body-less HTML fragments are) —
-            # without this flag generate_appcast would emit a
-            # sparkle:releaseNotesLink pointing at an un-hosted .md (404).
-            --embed-release-notes
-            --download-url-prefix "https://github.com/oomol-lab/LockIME/releases/download/${{ inputs.tag }}/"
-          )
-          if [ "${{ inputs.channel }}" = "beta" ]; then GA_ARGS+=(--channel beta); fi
-          "$GA" "${GA_ARGS[@]}" build/dist
+          for ARCH in arm64 x86_64; do
+            # appcast.xml is the URL baked into every shipped arm64 build
+            # (including all pre-x86_64 releases) — only arm64 entries may
+            # ever land in it. x86_64 has its own feed file.
+            FEED=appcast.xml
+            [ "$ARCH" = "x86_64" ] && FEED=appcast-x86_64.xml
+            if [ "$HAVE_PAGES" = true ] && git cat-file -e "FETCH_HEAD:$FEED" 2>/dev/null; then
+              git show "FETCH_HEAD:$FEED" > "build/dist-$ARCH/appcast.xml"
+              echo "Seeded $FEED from gh-pages"
+            else
+              echo "gh-pages has no $FEED yet — starting fresh"
+            fi
+            # Args array is never empty at expansion time — expanding an empty
+            # array under set -u is fatal on the runners' bash 3.2.
+            GA_ARGS=(
+              --ed-key-file "$RUNNER_TEMP/eddsa_priv"
+              # REQUIRED: inline the LockIME-<ver>-<arch>.md staged above as a
+              # CDATA <description sparkle:format="markdown">. Markdown notes
+              # are NOT embedded by default (only DOCTYPE/body-less HTML
+              # fragments are) — without this flag generate_appcast would emit
+              # a sparkle:releaseNotesLink pointing at an un-hosted .md (404).
+              --embed-release-notes
+              --download-url-prefix "https://github.com/oomol-lab/LockIME/releases/download/${{ inputs.tag }}/"
+            )
+            if [ "${{ inputs.channel }}" = "beta" ]; then GA_ARGS+=(--channel beta); fi
+            "$GA" "${GA_ARGS[@]}" "build/dist-$ARCH"
+          done
           rm -f "$RUNNER_TEMP/eddsa_priv"
 
-      - name: Build DMG (from the stapled app)
-        id: dmg
-        # Built AFTER the appcast and into a directory generate_appcast never
-        # scans (build/dmg, not build/dist): the appcast must reference only the
-        # zip — the .dmg is a manual-download convenience, not an update channel.
+      - name: Build DMGs (from the stapled apps)
+        # Built AFTER the appcasts and into a directory generate_appcast never
+        # scans (build/dmg, not build/dist-*): the appcasts must reference only
+        # the zips — the .dmg is a manual-download convenience, not an update
+        # channel.
         run: |
           set -euo pipefail
-          DMG="build/dmg/$APP_NAME-${{ inputs.version }}.dmg"
-          scripts/make-dmg.sh "build/export/$APP_NAME.app" "$DMG"
-          # Sign the image itself so Gatekeeper trusts the container, not just
-          # the (already-signed, already-stapled) app inside it.
-          codesign --force --sign "Developer ID Application" --timestamp "$DMG"
-          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          for ARCH in arm64 x86_64; do
+            DMG="build/dmg/$APP_NAME-${{ inputs.version }}-$ARCH.dmg"
+            scripts/make-dmg.sh "build/export-$ARCH/$APP_NAME.app" "$DMG"
+            # Sign the image itself so Gatekeeper trusts the container, not
+            # just the (already-signed, already-stapled) app inside it.
+            codesign --force --sign "Developer ID Application" --timestamp "$DMG"
+          done
 
-      - name: Notarize & staple DMG
+      - name: Notarize & staple DMGs
         env:
           MACOS_NOTARIZATION_KEY: ${{ secrets.MACOS_NOTARIZATION_KEY }}
           MACOS_NOTARIZATION_KEY_ID: ${{ secrets.MACOS_NOTARIZATION_KEY_ID }}
           MACOS_NOTARIZATION_ISSUER_ID: ${{ secrets.MACOS_NOTARIZATION_ISSUER_ID }}
         run: |
           set -euo pipefail
-          DMG="${{ steps.dmg.outputs.dmg }}"
           echo "$MACOS_NOTARIZATION_KEY" > "$RUNNER_TEMP/notary_key.p8"
-          # A .dmg is itself a valid notarization submission — no wrapping zip.
-          xcrun notarytool submit "$DMG" \
-            --key "$RUNNER_TEMP/notary_key.p8" \
-            --key-id "$MACOS_NOTARIZATION_KEY_ID" \
-            --issuer "$MACOS_NOTARIZATION_ISSUER_ID" \
-            --wait
-          xcrun stapler staple "$DMG"
+          for ARCH in arm64 x86_64; do
+            DMG="build/dmg/$APP_NAME-${{ inputs.version }}-$ARCH.dmg"
+            # A .dmg is itself a valid notarization submission — no wrapping zip.
+            xcrun notarytool submit "$DMG" \
+              --key "$RUNNER_TEMP/notary_key.p8" \
+              --key-id "$MACOS_NOTARIZATION_KEY_ID" \
+              --issuer "$MACOS_NOTARIZATION_ISSUER_ID" \
+              --wait
+            xcrun stapler staple "$DMG"
+          done
           rm -f "$RUNNER_TEMP/notary_key.p8"
 
       - name: Tag & publish GitHub Release
@@ -265,24 +314,30 @@ jobs:
           # the default branch points at by the time this step runs.
           target_commitish: ${{ github.sha }}
           prerelease: ${{ inputs.prerelease }}
+          # Four artifacts per release: a zip (the Sparkle enclosure) and a
+          # dmg (manual download) for each architecture. The dist dirs also
+          # hold .md release notes and the appcast — only the zips ship.
           files: |
-            ${{ steps.package.outputs.zip }}
-            ${{ steps.dmg.outputs.dmg }}
+            build/dist-arm64/*.zip
+            build/dist-x86_64/*.zip
+            build/dmg/*.dmg
           # Reuse the exact notes embedded in the appcast (generated above) so
           # the Release page and the Sparkle update window never disagree.
           # (Replaces generate_release_notes: true, which would regenerate them
           # independently and only populate the Release page, not the appcast.)
           body_path: build/release-notes.md
 
-      - name: Stage appcast for gh-pages
-        # Publish ONLY the appcast. build/dist also holds the distribution
-        # zip, which the appcast never references (enclosure URLs point at
-        # GitHub Releases) — publishing it would grow gh-pages by one app
-        # bundle per build, forever.
+      - name: Stage appcasts for gh-pages
+        # Publish ONLY the appcasts. The dist dirs also hold the distribution
+        # zips, which the appcasts never reference (enclosure URLs point at
+        # GitHub Releases) — publishing those would grow gh-pages by one app
+        # bundle per build, forever. The arm64 feed keeps the historical
+        # appcast.xml name: it is the URL baked into every shipped build.
         run: |
           set -euo pipefail
           mkdir -p build/pages
-          cp build/dist/appcast.xml build/pages/appcast.xml
+          cp build/dist-arm64/appcast.xml build/pages/appcast.xml
+          cp build/dist-x86_64/appcast.xml build/pages/appcast-x86_64.xml
 
       - name: Publish appcast to gh-pages
         uses: peaceiris/actions-gh-pages@v4

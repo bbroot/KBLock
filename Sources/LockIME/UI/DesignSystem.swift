@@ -132,3 +132,30 @@ enum DS {
         static let resultDwell: Duration = .seconds(3)
     }
 }
+
+// MARK: - Availability-bridging styles
+
+extension View {
+    /// Tahoe's `.glass` button style, degrading to `.bordered` pre-26
+    /// (the deployment floor predates Liquid Glass; these two helpers are the
+    /// only sanctioned way to use glass styles — never call them directly).
+    @ViewBuilder
+    func dsGlassButtonStyle() -> some View {
+        if #available(macOS 26.0, *) {
+            buttonStyle(.glass)
+        } else {
+            buttonStyle(.bordered)
+        }
+    }
+
+    /// Tahoe's `.glassProminent` button style, degrading to
+    /// `.borderedProminent` pre-26.
+    @ViewBuilder
+    func dsGlassProminentButtonStyle() -> some View {
+        if #available(macOS 26.0, *) {
+            buttonStyle(.glassProminent)
+        } else {
+            buttonStyle(.borderedProminent)
+        }
+    }
+}

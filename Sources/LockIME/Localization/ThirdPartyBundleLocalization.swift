@@ -1,7 +1,7 @@
 import Foundation
 import LockIMEKit
 import ObjectiveC
-import Synchronization
+import os
 
 /// Third-party packages localize their own UI strings with
 /// `NSLocalizedString(bundle: .module)`, which resolves against the *system*
@@ -33,7 +33,10 @@ enum ThirdPartyBundleLocalization {
 /// must not add stored instance state. Resolves every string in the app's
 /// chosen language, falling back to English — never the system language.
 private final class LanguageOverrideBundle: Bundle, @unchecked Sendable {
-    static let language = Mutex<SupportedLanguage>(.english)
+    // OSAllocatedUnfairLock instead of Synchronization.Mutex: same shape
+    // (state-protecting withLock), but available from macOS 13 — Mutex is
+    // 15-only and the deployment floor is 14 (see project.yml).
+    static let language = OSAllocatedUnfairLock<SupportedLanguage>(initialState: .english)
 
     override func localizedString(forKey key: String, value: String?, table: String?) -> String {
         let language = Self.language.withLock { $0 }

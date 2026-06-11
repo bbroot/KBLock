@@ -15,8 +15,9 @@ versions, and the workflows create them — you never push a tag by hand.
   `X.Y.Z-beta.N`, where `X.Y.Z` is the latest stable tag and `N` continues
   from the highest existing `-beta.*` tag for that base.
 - Every published build creates the matching `vX.Y.Z[-beta.N]` git tag and a
-  GitHub Release carrying both a zip and a notarized `.dmg`. Beta releases are
-  marked **pre-release**, so they are never shown as "Latest".
+  GitHub Release carrying a zip and a notarized `.dmg` **per architecture**
+  (`LockIME-<version>-arm64.*` and `LockIME-<version>-x86_64.*`). Beta
+  releases are marked **pre-release**, so they are never shown as "Latest".
 - An explicit stable version must be **newer than the latest stable tag** —
   backfill releases are rejected by `compute_version.sh` (a newer-created
   release would steal "Latest", and the date-stamped build number would top
@@ -56,6 +57,35 @@ The app's Updates settings let users opt into beta; the updater's
 `sparkle:channel=beta`; stable items carry no channel tag (Sparkle's default),
 so stable users never see nightlies while beta users see both and pick the newest.
 
+## Architectures & update feeds
+
+We ship **one app per architecture — never a universal binary** (download
+size; a post-build phase even thins the prebuilt fat Sparkle framework to the
+built arch, see `scripts/thin-embedded-frameworks.sh`). Each architecture is
+its own product line with its own Sparkle feed, and **cross-architecture
+updates are unsupported by design**:
+
+| Feed (gh-pages) | Architecture | Resolved by |
+|---|---|---|
+| `appcast.xml` | arm64 | `SUFeedURL` in Info.plist (the delegate returns `nil`) |
+| `appcast-x86_64.xml` | x86_64 | `#if arch(x86_64)` in `UpdaterDelegate.feedURLString(for:)` |
+
+The x86_64 feed choice is pinned **at compile time** in the binary itself, so
+no build or CI misconfiguration can ever point an Intel app at the arm64 feed
+(or vice versa).
+
+**Backward-compatibility invariant:** `appcast.xml` is the URL baked into
+every shipped arm64 build — including all releases that predate the x86_64
+port, which were arm64-only — so it must keep serving **arm64-only entries
+forever**. The workflow enforces this structurally: each arch has its own
+`build/dist-<arch>/` scan root for `generate_appcast`, seeded from its own
+gh-pages feed file, so a feed can only ever see its own architecture's
+archive. Both channels (stable/beta) exist within each feed, exactly as
+before.
+
+Both apps of one release share the same version and date-stamped
+`CFBundleVersion`; the two feeds never interact.
+
 ## One-time setup
 
 ### 1. Sparkle EdDSA keys
@@ -89,8 +119,10 @@ key ID, issuer ID, and the `.p8` contents — they become `MACOS_NOTARIZATION_KE
 
 ### 4. gh-pages branch
 
-Create an empty `gh-pages` branch; the workflow publishes `appcast.xml` there
-(served at `https://oomol-lab.github.io/LockIME/appcast.xml`, the `SUFeedURL`).
+Create an empty `gh-pages` branch; the workflow publishes the feeds there —
+`appcast.xml` (arm64, served at
+`https://oomol-lab.github.io/LockIME/appcast.xml`, the `SUFeedURL`) and
+`appcast-x86_64.xml` (x86_64, compiled into the Intel binary).
 
 ## Required GitHub secrets
 
@@ -110,12 +142,14 @@ Create an empty `gh-pages` branch; the workflow publishes `appcast.xml` there
    (`1.2.3`); leave it empty to auto-bump the latest stable tag by the chosen
    segment (`patch` / `minor` / `major`). No file edit is ever needed —
    `project.yml` stays at `0.0.0-development`.
-2. The workflow computes the version, builds, tests, archives (Developer ID,
-   date-based build number), notarizes, staples, zips, runs `generate_appcast`
-   (with `--channel beta` for pre-release versions), builds and notarizes a
-   `.dmg` from the stapled app, then creates the `vX.Y.Z` tag on the built
-   commit, publishes the GitHub Release with the zip **and** the dmg, and
-   updates `appcast.xml` on `gh-pages`.
+2. The workflow computes the version, builds, tests, then **for each
+   architecture (arm64, x86_64)** archives (Developer ID, shared date-based
+   build number), notarizes, staples, zips, runs `generate_appcast` on that
+   arch's own dist dir (with `--channel beta` for pre-release versions), and
+   builds and notarizes a `.dmg` from the stapled app. It then creates the
+   `vX.Y.Z` tag on the built commit, publishes the GitHub Release with both
+   zips **and** both dmgs, and updates `appcast.xml` + `appcast-x86_64.xml`
+   on `gh-pages`.
 
 The signing order is strict: **codesign → notarize → staple → (re)zip**. The
 distribution zip is produced *after* stapling.
@@ -125,9 +159,10 @@ distribution zip is produced *after* stapling.
 Sparkle shows the update window's release notes from the **appcast item**, not
 from the GitHub Release body — the two are separate channels. Before
 `generate_appcast` runs, the workflow generates the notes once
-(`gh api …/releases/generate-notes` on the built commit) and writes the markdown
-to `build/dist/LockIME-<version>.md`. `generate_appcast` matches that file to the
-zip by basename and embeds it inline as a CDATA
+(`gh api …/releases/generate-notes` on the built commit) and stages the same
+markdown into each arch's dist dir as
+`build/dist-<arch>/LockIME-<version>-<arch>.md`. `generate_appcast` matches
+that file to the zip by basename and embeds it inline as a CDATA
 `<description sparkle:format="markdown">` (`--embed-release-notes` is required —
 markdown notes are not auto-embedded the way HTML fragments are), so the notes
 travel with the appcast and need no hosting. The update window renders that

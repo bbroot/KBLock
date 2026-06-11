@@ -3,7 +3,7 @@ name: LockIME
 options:
   bundleIdPrefix: com.oomol
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "14.0"
   developmentLanguage: en
   knownRegions: [en, zh-Hans, zh-Hant, ja, fr, de, es, pt, ru]
   createIntermediateGroups: true
@@ -13,7 +13,14 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    # Floor chosen by audit, not aspiration: the highest dependency minimum is
+    # PermissionFlow (13.0) and our own code bottoms out at @Observable (14.0)
+    # — going below 14 would mean rewriting the observation layer. Newer-OS
+    # API survives only behind #available with a fallback (26: glass button
+    # styles; 15: the settings Tab builder); the compiler enforces the rest.
+    # macOS 26 keeps the full Tahoe look — Liquid Glass comes from the system
+    # rendering standard controls.
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_STRICT_CONCURRENCY: complete
     DEAD_CODE_STRIPPING: YES
     GCC_WARN_UNINITIALIZED_AUTOS: YES
@@ -24,6 +31,10 @@ settings:
     MARKETING_VERSION: "0.0.0-development"
     CURRENT_PROJECT_VERSION: "1"
     ONLY_ACTIVE_ARCH: YES
+    # Single-arch by design — we ship one app per architecture, never a
+    # universal binary (download size). Local default is arm64; CI overrides
+    # per pass (`ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO`, see build-publish.yml),
+    # and `make build ARCH=x86_64` does the same locally.
     ARCHS: arm64
 
 packages:
@@ -84,6 +95,12 @@ targets:
         Release:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           DEVELOPMENT_TEAM: PWJ9VF7HHT
+    postBuildScripts:
+      # Sparkle ships as a fat (arm64 + x86_64) xcframework; since we ship
+      # single-arch apps, strip the unused slice and re-sign (saves ~1.4 MB).
+      - name: Thin embedded frameworks to ARCHS
+        script: '"$PROJECT_DIR/scripts/thin-embedded-frameworks.sh"'
+        basedOnDependencyAnalysis: false
 
   LockIMETests:
     type: bundle.unit-test

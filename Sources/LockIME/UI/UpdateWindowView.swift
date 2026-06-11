@@ -135,22 +135,22 @@ struct UpdateWindowView: View {
         switch model.phase {
         case .found:
             Button("Later") { model.dismissReply(); closeWindow() }
-                .buttonStyle(.glass)
+                .dsGlassButtonStyle()
             Button("Install Update") { model.install() }
-                .buttonStyle(.glassProminent)
+                .dsGlassProminentButtonStyle()
                 .keyboardShortcut(.defaultAction)
         case .readyToInstall:
             Button("Later") { model.dismissReply(); closeWindow() }
-                .buttonStyle(.glass)
+                .dsGlassButtonStyle()
             Button("Install and Relaunch") { model.install() }
-                .buttonStyle(.glassProminent)
+                .dsGlassProminentButtonStyle()
                 .keyboardShortcut(.defaultAction)
         case .checking, .downloading, .extracting:
             Button("Cancel") { model.dismissReply(); closeWindow() }
-                .buttonStyle(.glass)
+                .dsGlassButtonStyle()
         case .upToDate, .error, .idle:
             Button("Close") { closeWindow() }
-                .buttonStyle(.glassProminent)
+                .dsGlassProminentButtonStyle()
                 .keyboardShortcut(.defaultAction)
         case .installing:
             EmptyView()

@@ -7,14 +7,16 @@
 [![最新版本](https://img.shields.io/github/v/release/oomol-lab/LockIME?sort=semver&color=3A5BD9)](https://github.com/oomol-lab/LockIME/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/oomol-lab/LockIME/ci.yml?branch=main&label=CI)](https://github.com/oomol-lab/LockIME/actions/workflows/ci.yml)
 [![许可证: GPL-3.0](https://img.shields.io/github/license/oomol-lab/LockIME?color=3A5BD9)](LICENSE)
-[![macOS 26+](https://img.shields.io/badge/macOS-26%2B%20Tahoe-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift 6.0](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)](https://swift.org)
 
 </div>
 
 一款 macOS 菜单栏应用，用于**锁定你的键盘输入源**。每当你（或其他应用）切换输入法时，LockIME 会立即切回被锁定的那个——可以是全局的、按前台应用区分的，或者（在可选的增强模式下）按浏览器 URL 区分的。
 
-> macOS 26 (Tahoe) · 仅支持 Apple silicon · 基于 SwiftUI + Liquid Glass 构建。
+> macOS 14+ · 支持 Apple silicon 与 Intel——两个独立的应用，请下载与你的 Mac
+> 匹配的 `-arm64` 或 `-x86_64` 文件 · 基于 SwiftUI 构建，macOS 26 (Tahoe) 上
+> 呈现 Liquid Glass。
 
 ## Screenshots
 
@@ -57,7 +59,7 @@ LockIME 遵循单一的设计系统（`Sources/LockIME/UI/DesignSystem.swift`）
 
 ## Development
 
-需要 Xcode 26+、macOS 26+，以及 [XcodeGen](https://github.com/yonaskolb/XcodeGen) + [xcbeautify](https://github.com/cpisciotta/xcbeautify)（`brew install xcodegen xcbeautify`）。
+需要 Xcode 26+（应用本身以 macOS 14+ 为目标），以及 [XcodeGen](https://github.com/yonaskolb/XcodeGen) + [xcbeautify](https://github.com/cpisciotta/xcbeautify)（`brew install xcodegen xcbeautify`）。
 
 ```sh
 make gen     # generate LockIME.xcodeproj from project.yml
@@ -73,7 +75,7 @@ Xcode 项目由 `project.yml` 生成，不纳入版本控制。
 
 ## Releasing
 
-由 dispatch 驱动、经过公证的 Developer ID 发布，通过 Sparkle 在 **stable** 和 **beta** 两个通道自动更新：运行 Release 工作流（Actions → Release），它会从 git 标签计算版本号、构建，并自动创建标签和 GitHub Release——切勿手动推送标签。beta 通道即每夜构建。参见 [docs/RELEASING.md](docs/RELEASING.md)。
+由 dispatch 驱动、经过公证的 Developer ID 发布，通过 Sparkle 在 **stable** 和 **beta** 两个通道自动更新：运行 Release 工作流（Actions → Release），它会从 git 标签计算版本号、构建，并自动创建标签和 GitHub Release——切勿手动推送标签。beta 通道即每夜构建。每个版本都分别提供 Apple silicon 与 Intel 两个独立应用，各自走自己的更新 feed（不提供 universal 二进制，也不支持跨架构更新）。参见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## Architecture
 

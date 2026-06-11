@@ -119,13 +119,28 @@ final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
         return UpdateChannel.allowedChannels(for: .from(usesBeta: usesBeta))
     }
 
-    #if DEBUG
-    /// Update lab (`make update-test-*`): point the updater at a loopback feed
-    /// without touching the shipped `SUFeedURL`. `nil` (the normal case) falls
-    /// back to Info.plist; release builds never consult the environment.
+    /// Each architecture is its own product with its own feed — we ship
+    /// single-arch apps and don't support cross-arch updates — so the feed
+    /// choice is pinned at compile time, where no build/CI misconfiguration
+    /// can reach it: an x86_64 binary can only ever see x86_64 updates.
+    /// arm64 returns `nil` to fall back to the Info.plist `SUFeedURL`
+    /// (`appcast.xml`) — the URL every already-shipped arm64 build reads,
+    /// which therefore must keep serving arm64-only entries forever (see
+    /// docs/RELEASING.md).
     func feedURLString(for updater: SPUUpdater) -> String? {
-        let feed = ProcessInfo.processInfo.environment["LOCKIME_UPDATE_FEED"]
-        return (feed?.isEmpty ?? true) ? nil : feed
+        #if DEBUG
+        // Update lab (`make update-test-*`): point the updater at a loopback
+        // feed without touching the shipped `SUFeedURL`. Release builds never
+        // consult the environment.
+        if let feed = ProcessInfo.processInfo.environment["LOCKIME_UPDATE_FEED"],
+           !feed.isEmpty {
+            return feed
+        }
+        #endif
+        #if arch(x86_64)
+        return "https://oomol-lab.github.io/LockIME/appcast-x86_64.xml"
+        #else
+        return nil
+        #endif
     }
-    #endif
 }

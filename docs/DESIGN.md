@@ -3,6 +3,17 @@
 > The single source of truth for LockIME's visual & interaction design. Grounded
 > in Apple HIG (macOS 26 / Liquid Glass) and the patterns of top menu-bar apps
 > (Ice, Loop, Stats, Bartender, System Settings, Apple Software Update).
+>
+> **Deployment floor: macOS 14.0** (anchored by `@Observable`; going lower
+> means rewriting the observation layer). "Tahoe first-class" is a design
+> target, not an API dependency: the glass aesthetic comes from the system
+> rendering standard controls on macOS 26. Newer-OS API is allowed solely
+> behind `#available` with a sane fallback — currently two cases: the
+> `dsGlass*ButtonStyle()` helpers in `DesignSystem.swift` (26 → bordered
+> styles) and the settings `Tab` builder + Updates badge in
+> `SettingsRootView.swift` (15 → `.tabItem`, no badge). Everything else must
+> compile against the 14.0 target, which the compiler enforces. Pre-26 the
+> app renders with standard Sonoma/Sequoia materials.
 
 ## 1. North star
 

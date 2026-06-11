@@ -1,7 +1,18 @@
 SCHEME      := LockIME
 CONFIG      ?= Debug
+# We ship one app per architecture (no universal binaries — download size).
+# `make build ARCH=x86_64` cross-builds the Intel app (via the generic
+# destination — `arch=x86_64` is not a valid destination on Apple Silicon);
+# the result runs locally under Rosetta. Tests always run on the host arch.
+ARCH        ?= arm64
 DERIVED     := build/DerivedData
+ifeq ($(ARCH),arm64)
 DEST        := platform=macOS,arch=arm64
+ARCHFLAGS   := ARCHS=arm64
+else
+DEST        := generic/platform=macOS
+ARCHFLAGS   := ARCHS=$(ARCH) ONLY_ACTIVE_ARCH=NO
+endif
 APP         := $(DERIVED)/Build/Products/$(CONFIG)/LockIME.app
 DMG         := build/dmg/LockIME.dmg
 XCB         := set -o pipefail && xcodebuild
@@ -15,10 +26,11 @@ PRETTY      := | xcbeautify
 gen:
 	xcodegen generate
 
-## Build the app (Debug by default)
+## Build the app (Debug by default; ARCH=x86_64 for the Intel app)
 build: gen
 	$(XCB) -scheme $(SCHEME) -configuration $(CONFIG) \
-		-derivedDataPath $(DERIVED) -destination '$(DEST)' build $(PRETTY)
+		-derivedDataPath $(DERIVED) -destination '$(DEST)' \
+		$(ARCHFLAGS) build $(PRETTY)
 
 ## Build and launch the app
 run: build

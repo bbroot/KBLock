@@ -7,7 +7,7 @@
 [![Latest release](https://img.shields.io/github/v/release/oomol-lab/LockIME?sort=semver&color=3A5BD9)](https://github.com/oomol-lab/LockIME/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/oomol-lab/LockIME/ci.yml?branch=main&label=CI)](https://github.com/oomol-lab/LockIME/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/github/license/oomol-lab/LockIME?color=3A5BD9)](LICENSE)
-[![macOS 26+](https://img.shields.io/badge/macOS-26%2B%20Tahoe-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift 6.0](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)](https://swift.org)
 
 </div>
@@ -17,7 +17,9 @@ another app) switch input methods, LockIME immediately switches back to the lock
 one — globally, or per-frontmost-app, or (with the optional enhanced mode) per
 browser URL.
 
-> macOS 26 (Tahoe) · Apple silicon only · built with SwiftUI + Liquid Glass.
+> macOS 14+ · Apple silicon & Intel — separate apps, download the `-arm64` or
+> `-x86_64` file matching your Mac · built with SwiftUI, Liquid Glass on
+> macOS 26 (Tahoe).
 
 ## Screenshots
 
@@ -71,7 +73,8 @@ The app icon is generated programmatically (no design tool) — regenerate it wi
 
 ## Development
 
-Requires Xcode 26+, macOS 26+, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+Requires Xcode 26+ (the app itself targets macOS 14+), and
+[XcodeGen](https://github.com/yonaskolb/XcodeGen)
 + [xcbeautify](https://github.com/cpisciotta/xcbeautify) (`brew install xcodegen xcbeautify`).
 
 ```sh
@@ -93,7 +96,9 @@ Dispatch-driven, notarized Developer ID releases with Sparkle auto-update over
 **stable** and **beta** channels: run the Release workflow (Actions → Release)
 and it computes the version from git tags, builds, and creates the tag and
 GitHub Release automatically — never push a tag by hand. The beta channel is
-the nightly build. See [docs/RELEASING.md](docs/RELEASING.md).
+the nightly build. Every release ships separate Apple-silicon and Intel apps,
+each on its own update feed (no universal binary, no cross-arch updates). See
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## Architecture
 
