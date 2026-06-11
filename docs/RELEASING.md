@@ -173,14 +173,17 @@ pre-rendered HTML fragment**, which that view would show as raw tags. The same
 file is reused verbatim as the GitHub Release `body`, so the Release page and the
 update window can never disagree.
 
-`generate-notes` lists **merged pull requests** under "What's Changed". When a
-release contains no PRs (changes pushed straight to the branch), that section is
-empty, so the workflow falls back to a per-commit list built from
-`git log <previous-tag>..HEAD` (the previous tag is parsed from GitHub's own
-"Full Changelog" compare link, so the two always cover the same range). This is
-why the build checks out with `fetch-depth: 0` — the shallow default has no tags
-or history to diff. Landing changes via PRs still yields the richer
-PR-titled notes.
+`generate-notes` lists **merged pull requests** under "What's Changed" —
+commits pushed straight to the branch are invisible to it. The workflow
+therefore always augments the generated body: every commit in
+`git log <previous-tag>..HEAD` (the range is parsed from GitHub's own
+"Full Changelog" compare link, so the two always cover the same diff) that no
+merged PR introduced — asked per commit via the `/commits/{sha}/pulls` API, so
+it stays correct even when a squash title drops its `(#N)` suffix — is appended
+to the "What's Changed" section as a linked-hash bullet (the section is created
+first for a PR-less release, whose generated body is just the "Full Changelog"
+link). This is why the build checks out with `fetch-depth: 0` — the shallow
+default has no tags or history to diff.
 
 The `.dmg` (drag-to-`/Applications`, built by `scripts/make-dmg.sh`) is a
 **manual-download convenience only** — Sparkle auto-updates still pull the zip,

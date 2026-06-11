@@ -51,8 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # Full history + tags so the release-notes step can diff
-          # <previous-tag>..HEAD when GitHub's generated notes list no PRs.
+          # Full history + tags so the release-notes step can list the
+          # direct-push commits in <previous-tag>..HEAD.
           fetch-depth: 0
 
       - name: Stamp build number
@@ -188,26 +188,58 @@ jobs:
             -f tag_name="${{ inputs.tag }}" \
             -f target_commitish="${{ github.sha }}" \
             --jq .body > build/release-notes.md
-          # generate-notes lists only merged PRs under "What's Changed" (each a
-          # "* " bullet). When changes land straight on the branch that section
-          # is empty and the body is just the "Full Changelog" link — fall back
-          # to a per-commit list so the notes are never effectively empty.
-          if ! grep -q '^\* ' build/release-notes.md; then
-            # Reuse the exact base GitHub chose for its compare link so the
-            # commit range matches the "Full Changelog" diff. Empty (→ whole
-            # history) only for the very first release, which has no prior tag.
-            PREV="$(sed -nE 's#.*/compare/(.+)\.\.\..*#\1#p' build/release-notes.md | head -1)"
-            if [ -n "$PREV" ]; then RANGE="$PREV..${{ github.sha }}"; else RANGE="${{ github.sha }}"; fi
-            # Explicit markdown links — neither the update window's renderer
-            # nor GitHub autolinks a backticked short hash.
-            COMMITS="$(git log --reverse --no-merges --pretty='format:* %s ([`%h`](https://github.com/${{ github.repository }}/commit/%H))' "$RANGE")"
-            if [ -n "$COMMITS" ]; then
-              { printf "## What's Changed\n\n%s\n\n" "$COMMITS"; cat build/release-notes.md; } \
-                > build/release-notes.md.new
-              mv build/release-notes.md.new build/release-notes.md
-              echo "No PRs in $RANGE — wrote $(printf '%s\n' "$COMMITS" | grep -c '^\* ') commit lines"
+          # generate-notes sees only merged PRs ("What's Changed" bullets) —
+          # commits pushed straight to the branch are invisible to it. ALWAYS
+          # augment the generated body with those direct-push commits, so a
+          # release mixing PRs and direct pushes lists both.
+          #
+          # Reuse the exact base GitHub chose for its compare link so the
+          # commit range matches the "Full Changelog" diff. Anchored to that
+          # line, NOT any compare URL in the body: a PR title may itself
+          # contain one, and the bullets sit above the Full Changelog line.
+          # Empty (→ whole history) only for the very first release, which
+          # has no prior tag.
+          PREV="$(sed -nE 's#^\*\*Full Changelog\*\*:.*/compare/(.+)\.\.\..*#\1#p' build/release-notes.md | head -1)"
+          if [ -n "$PREV" ]; then RANGE="$PREV..${{ github.sha }}"; else RANGE="${{ github.sha }}"; fi
+          # A commit is a direct push iff no merged PR introduced it. Asking
+          # GitHub per commit (instead of pattern-matching the squash suffix
+          # "(#N)" onto subjects) stays correct when a squash title was edited
+          # to drop the suffix and under any future merge strategy.
+          : > build/direct-commits.md
+          while read -r SHA SHORT SUBJECT; do
+            [ -n "$SHA" ] || continue
+            MERGED_PRS="$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null)] | length')"
+            if [ "$MERGED_PRS" -eq 0 ]; then
+              # Explicit markdown links — neither the update window's renderer
+              # nor GitHub autolinks a backticked short hash.
+              printf '* %s ([`%s`](https://github.com/%s/commit/%s))\n' \
+                "$SUBJECT" "$SHORT" "${{ github.repository }}" "$SHA" >> build/direct-commits.md
             fi
+          done < <(git log --reverse --no-merges --pretty='tformat:%H %h %s' "$RANGE")
+          if [ -s build/direct-commits.md ]; then
+            # A PR-less body has no section header at all (just the "Full
+            # Changelog" line) — create the one the commits belong in.
+            if ! grep -q "^## What's Changed" build/release-notes.md; then
+              printf "## What's Changed\n\n" | cat - build/release-notes.md > build/release-notes.md.new
+              mv build/release-notes.md.new build/release-notes.md
+            fi
+            # Splice the commit bullets onto the end of the "What's Changed"
+            # section: right before the next section GitHub may emit ("## New
+            # Contributors") or the trailing "Full Changelog" line.
+            awk '
+              NR == FNR { commits[FNR] = $0; n = FNR; next }
+              !spliced && (/^## New Contributors/ || /^\*\*Full Changelog/) {
+                for (i = 1; i <= n; i++) print commits[i]
+                print ""
+                spliced = 1
+              }
+              { print }
+              END { if (!spliced) for (i = 1; i <= n; i++) print commits[i] }
+            ' build/direct-commits.md build/release-notes.md > build/release-notes.md.new
+            mv build/release-notes.md.new build/release-notes.md
           fi
+          echo "Direct-push commits in ${RANGE}: $(wc -l < build/direct-commits.md | tr -d ' ')"
           # Stage the markdown next to each arch's archive (same basename,
           # .md) so the next step's generate_appcast --embed-release-notes
           # inlines it as a CDATA <description sparkle:format="markdown">. No
