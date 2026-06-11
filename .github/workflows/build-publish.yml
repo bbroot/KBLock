@@ -198,7 +198,9 @@ jobs:
             # history) only for the very first release, which has no prior tag.
             PREV="$(sed -nE 's#.*/compare/(.+)\.\.\..*#\1#p' build/release-notes.md | head -1)"
             if [ -n "$PREV" ]; then RANGE="$PREV..${{ github.sha }}"; else RANGE="${{ github.sha }}"; fi
-            COMMITS="$(git log --reverse --no-merges --pretty='format:* %s (`%h`)' "$RANGE")"
+            # Explicit markdown links — neither the update window's renderer
+            # nor GitHub autolinks a backticked short hash.
+            COMMITS="$(git log --reverse --no-merges --pretty='format:* %s ([`%h`](https://github.com/${{ github.repository }}/commit/%H))' "$RANGE")"
             if [ -n "$COMMITS" ]; then
               { printf "## What's Changed\n\n%s\n\n" "$COMMITS"; cat build/release-notes.md; } \
                 > build/release-notes.md.new
