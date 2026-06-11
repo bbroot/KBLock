@@ -42,23 +42,34 @@ macOS system language is irrelevant to what the user must see. Consequences:
 
 ## Documentation translations — hard rules
 
-`README.md` ships in **English + Simplified Chinese only**. English is the
-authoritative source; `README.zh-CN.md` is its translation, kept in sync. The
-docs under `docs/` (`DESIGN.md`, `RELEASING.md`) are **English-only — do not
-translate them.**
+The README ships in **every `SupportedLanguage`**. English is the authoritative
+source and lives at the repo root (`README.md` — the **only** README there);
+the translations live in `docs/README/`, kept in sync. The docs under `docs/`
+(`DESIGN.md`, `RELEASING.md`) are **English-only — do not translate them.**
 
-- **Naming:** English is the base name (`README.md`); the Chinese translation is
-  `README.zh-CN.md` (region code `zh-CN`, *not* the script code `zh-Hans`).
-- **Language switcher:** both READMEs carry a nav line directly under the H1 —
-  `**English** · [简体中文](README.zh-CN.md)` and
-  `[English](README.md) · **简体中文**` — with the current language **bold and
-  unlinked**. The autonyms `English` / `简体中文` are never translated.
-- **Intra-doc links point at the English docs.** `README.zh-CN.md` links to
-  `docs/DESIGN.md` / `docs/RELEASING.md` (there are no translated docs).
+- **Naming:** translations are `docs/README/README.<code>.md` with **region**
+  codes for Chinese (`zh-CN`, `zh-TW` — *not* the script codes
+  `zh-Hans`/`zh-Hant`) and bare language codes otherwise:
+  `ja`, `fr`, `de`, `es`, `pt`, `ru`.
+- **Language switcher:** every README carries a nav line directly under the H1
+  listing **all** languages in `SupportedLanguage` declaration order, with the
+  current language **bold and unlinked**. Autonyms (`English`, `简体中文`,
+  `繁體中文`, `日本語`, `Français`, `Deutsch`, `Español`, `Português`,
+  `Русский`) are never translated. From `docs/README/` the English link is
+  `../../README.md`; sibling translations are linked by bare filename.
+- **Intra-doc links point at the English docs.** From `docs/README/` that is
+  `../DESIGN.md` / `../RELEASING.md` (there are no translated docs), and the
+  license link is `../../LICENSE`.
+- **Badges:** the license badge is a **static** shields.io badge
+  (`img.shields.io/badge/license-GPL--3.0-3A5BD9`) — never the dynamic
+  `github/license/...` endpoint, which hits the GitHub API and breaks when
+  rate-limited. Localized screenshots exist for `en` and `zh-CN` only; every
+  other translation uses the `en` screenshots.
 - **Never translate code.** Fenced/inline code, shell commands, file paths,
   identifiers, `make` targets, env-var and secret names, URLs, hex colors,
   version strings, framework and brand names (LockIME, Sparkle, SwiftUI,
   macOS, Tahoe, …) stay byte-for-byte identical. The H1 keeps the bare
-  `# LockIME` brand.
-- **When you edit `README.md`, update `README.zh-CN.md` in the same change**
-  (or explicitly flag the drift).
+  `# LockIME` brand. Section headings (`## Features`, …) also stay in English.
+- **When you edit `README.md`, update every translation in `docs/README/` in
+  the same change** (or explicitly flag the drift). When a language is added
+  to `SupportedLanguage`, add its README and extend every nav line.

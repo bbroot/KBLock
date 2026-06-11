@@ -2,11 +2,11 @@
 
 <div align="center">
 
-**English** · [简体中文](README.zh-CN.md)
+**English** · [简体中文](docs/README/README.zh-CN.md) · [繁體中文](docs/README/README.zh-TW.md) · [日本語](docs/README/README.ja.md) · [Français](docs/README/README.fr.md) · [Deutsch](docs/README/README.de.md) · [Español](docs/README/README.es.md) · [Português](docs/README/README.pt.md) · [Русский](docs/README/README.ru.md)
 
 [![Latest release](https://img.shields.io/github/v/release/oomol-lab/LockIME?sort=semver&color=3A5BD9)](https://github.com/oomol-lab/LockIME/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/oomol-lab/LockIME/ci.yml?branch=main&label=CI)](https://github.com/oomol-lab/LockIME/actions/workflows/ci.yml)
-[![License: GPL-3.0](https://img.shields.io/github/license/oomol-lab/LockIME?color=3A5BD9)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-3A5BD9)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift 6.0](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)](https://swift.org)
 
@@ -50,7 +50,9 @@ browser URL.
 - **Light & dark mode** — a unified, system-native design language that adapts to
   light and dark appearance, plus a bespoke app icon. See
   [docs/DESIGN.md](docs/DESIGN.md).
-- **Live language switching** — switch between 9 languages instantly, no restart.
+- **Live language switching** — switch between 9 languages instantly, no
+  restart: English, 简体中文, 繁體中文, 日本語, Français, Deutsch, Español,
+  Português, Русский.
 - **24-hour activation log** — review what was switched, why, and for how long.
 - **Auto-update** — stable and beta channels via Sparkle, with a custom update
   window.
