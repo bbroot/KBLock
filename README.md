@@ -1,6 +1,8 @@
-# LockIME
-
 <div align="center">
+
+<img src="docs/images/appicon.png" alt="LockIME" width="128">
+
+# LockIME
 
 **English** · [简体中文](docs/README/README.zh-CN.md) · [繁體中文](docs/README/README.zh-TW.md) · [日本語](docs/README/README.ja.md) · [Français](docs/README/README.fr.md) · [Deutsch](docs/README/README.de.md) · [Español](docs/README/README.es.md) · [Português](docs/README/README.pt.md) · [Русский](docs/README/README.ru.md)
 
