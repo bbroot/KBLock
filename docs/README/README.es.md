@@ -35,6 +35,20 @@ Una aplicación de barra de menús para macOS que **bloquea tu fuente de entrada
   </picture>
 </p>
 
+## Install
+
+Instala con [Homebrew](https://brew.sh) (el cask elige la compilación que
+corresponde a la arquitectura de tu Mac):
+
+```sh
+brew install --cask oomol-lab/tap/lockime
+```
+
+O descarga el `.dmg` que corresponda a tu Mac (`-arm64` para Apple silicon,
+`-x86_64` para Intel) desde la
+[última versión](https://github.com/oomol-lab/LockIME/releases/latest).
+En cualquier caso, la aplicación se mantiene actualizada mediante Sparkle.
+
 ## Features
 
 - **Rebloqueo instantáneo** — devuelve la fuente de entrada activa a la bloqueada en el momento en que tú (u otra aplicación) la cambias, globalmente o por aplicación.

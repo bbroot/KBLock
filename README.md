@@ -38,6 +38,20 @@ browser URL.
   </picture>
 </p>
 
+## Install
+
+Install with [Homebrew](https://brew.sh) (the cask picks the build matching
+your Mac's architecture):
+
+```sh
+brew install --cask oomol-lab/tap/lockime
+```
+
+Or download the `.dmg` matching your Mac (`-arm64` for Apple silicon,
+`-x86_64` for Intel) from the
+[latest release](https://github.com/oomol-lab/LockIME/releases/latest).
+Either way, the app keeps itself up to date via Sparkle.
+
 ## Features
 
 - **Instant re-lock** — switches the active input source back the moment you (or

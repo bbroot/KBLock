@@ -348,3 +348,38 @@ jobs:
           publish_dir: build/pages
           publish_branch: gh-pages
           keep_files: true
+
+      - name: Mint Homebrew tap token
+        # Cross-repo dispatch needs more than GITHUB_TOKEN (which is scoped
+        # to this repository), so mint a 1-hour installation token from the
+        # org's GitHub App (installed on homebrew-tap only, Contents r/w).
+        # Stable releases only — the cask tracks the stable channel.
+        id: tap-token
+        if: ${{ !inputs.prerelease }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.OOMOL_LAB_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OOMOL_LAB_GITHUB_APP_PRIVATE_KEY }}
+          # Both owner AND repositories: the App is not installed on this
+          # repo, and owner alone would scope the token to every repo of
+          # the installation.
+          owner: oomol-lab
+          repositories: homebrew-tap
+          # Least privilege, and a fast failure at mint time (instead of a
+          # 403 at dispatch time) if the App's permissions ever change.
+          permission-contents: write
+
+      - name: Bump Homebrew cask (oomol-lab/homebrew-tap)
+        # The payload carries just the version: the tap's bump-lockime
+        # workflow re-downloads the published zips and computes the sha256
+        # hashes itself, so the cask can never disagree with the actual
+        # artifacts. Runs last on purpose: release + appcasts are already
+        # out if this fails.
+        if: ${{ !inputs.prerelease }}
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh api repos/oomol-lab/homebrew-tap/dispatches \
+            -f event_type=lockime-release \
+            -f "client_payload[version]=$VERSION"

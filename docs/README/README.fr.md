@@ -35,6 +35,16 @@ Une application de barre de menus macOS qui **verrouille votre source de saisie 
   </picture>
 </p>
 
+## Install
+
+Installez avec [Homebrew](https://brew.sh) (le cask choisit le build correspondant à l'architecture de votre Mac) :
+
+```sh
+brew install --cask oomol-lab/tap/lockime
+```
+
+Ou téléchargez le `.dmg` correspondant à votre Mac (`-arm64` pour Apple silicon, `-x86_64` pour Intel) depuis la [dernière version](https://github.com/oomol-lab/LockIME/releases/latest). Dans les deux cas, l'application se maintient automatiquement à jour via Sparkle.
+
 ## Features
 
 - **Reverrouillage instantané** — rebascule la source de saisie active dès que vous (ou une autre application) la changez, globalement ou par application.

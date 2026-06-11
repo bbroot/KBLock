@@ -135,6 +135,8 @@ Create an empty `gh-pages` branch; the workflow publishes the feeds there —
 | `MACOS_NOTARIZATION_KEY_ID` | API key ID |
 | `MACOS_NOTARIZATION_ISSUER_ID` | API issuer ID |
 | `SPARKLE_EDDSA_PRIVATE_KEY` | exported Sparkle private key |
+| `OOMOL_LAB_GITHUB_APP_CLIENT_ID` | Client ID of the org's GitHub App, used to mint the token that dispatches the Homebrew cask bump |
+| `OOMOL_LAB_GITHUB_APP_PRIVATE_KEY` | private key (`.pem` contents) of that GitHub App |
 
 ## Cutting a release
 
@@ -187,6 +189,38 @@ because the appcast references the zip exclusively. The dmg is built into
 then signed, notarized, and stapled on its own. Run `make dmg` to build the
 same image locally (unsigned/unnotarized; use `CONFIG=Release` for a
 release-config bundle).
+
+## Homebrew cask
+
+LockIME is also installable via a custom tap
+([`oomol-lab/homebrew-tap`](https://github.com/oomol-lab/homebrew-tap)):
+
+```sh
+brew install --cask oomol-lab/tap/lockime
+```
+
+The cask (`Casks/lockime.rb`) tracks the **stable channel only** and resolves
+the per-architecture zip via `arch`/`sha256 arm:/intel:` — the same artifacts
+Sparkle serves. It declares `auto_updates true` because the installed app
+updates itself via Sparkle; `brew upgrade` therefore skips it unless run with
+`--greedy`.
+
+The bump is automated end to end: the last step of `build-publish.yml` sends
+a `repository_dispatch` (event `lockime-release`, payload = version) to the
+tap repo for every stable release — pre-releases never dispatch. The tap's `bump-lockime.yml` then downloads
+both zips from the GitHub Release, recomputes their `sha256`, rewrites the
+cask, and audits it (`brew style` + `brew audit --cask --online --strict`)
+**before** pushing — its own push never triggers the tap's CI
+(`GITHUB_TOKEN` pushes don't start workflows), so the audit guard lives in
+the bump itself; the tap's CI covers manual pushes and PRs.
+
+The dispatch authenticates as the org's **GitHub App** (the workflow's
+`GITHUB_TOKEN` cannot reach other repos): `actions/create-github-app-token`
+mints a 1-hour installation token from `OOMOL_LAB_GITHUB_APP_CLIENT_ID` +
+`OOMOL_LAB_GITHUB_APP_PRIVATE_KEY`, scoped to `owner` + `repositories` =
+just `homebrew-tap` (the App is installed on that repo only, with
+Contents read/write). Manual fallback: run the tap's **Bump lockime**
+workflow with the version.
 
 ## When a publish run fails
 

@@ -35,6 +35,19 @@
   </picture>
 </p>
 
+## Install
+
+使用 [Homebrew](https://brew.sh) 安装（cask 会自动选择与你的 Mac
+架构匹配的构建）：
+
+```sh
+brew install --cask oomol-lab/tap/lockime
+```
+
+或者从[最新发布版](https://github.com/oomol-lab/LockIME/releases/latest)下载与你的
+Mac 匹配的 `.dmg`（Apple silicon 选 `-arm64`，Intel 选 `-x86_64`）。
+无论哪种方式，应用都会通过 Sparkle 自动保持最新。
+
 ## Features
 
 - **即时重新锁定**——每当你（或其他应用）切换输入源时，立即切回被锁定的那个，可全局或按应用生效。

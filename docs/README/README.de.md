@@ -35,6 +35,16 @@ Eine macOS-Menüleisten-App, die **deine Tastatur-Eingabequelle sperrt**. Wann i
   </picture>
 </p>
 
+## Install
+
+Installiere mit [Homebrew](https://brew.sh) (der Cask wählt den zur Architektur deines Macs passenden Build):
+
+```sh
+brew install --cask oomol-lab/tap/lockime
+```
+
+Oder lade die zu deinem Mac passende `.dmg`-Datei (`-arm64` für Apple silicon, `-x86_64` für Intel) aus dem [neuesten Release](https://github.com/oomol-lab/LockIME/releases/latest) herunter. So oder so hält sich die App via Sparkle automatisch aktuell.
+
 ## Features
 
 - **Sofortiges Wieder-Sperren** — schaltet die aktive Eingabequelle in dem Moment zurück, in dem du (oder eine andere App) sie wechselst, global oder pro App.
