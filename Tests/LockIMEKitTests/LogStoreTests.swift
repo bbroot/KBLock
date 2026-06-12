@@ -51,6 +51,13 @@ struct LogStoreTests {
         // A regular file standing where the store directory should be: the
         // on-disk ModelContainer can't be created beneath it, so init must
         // take the in-memory fallback branch.
+        //
+        // EXPECTED NOISE: this deliberately-broken path makes CoreData/SwiftData
+        // print diagnostics to stderr before the Swift error is thrown ("Store
+        // failed to load", "errno 20 / Not a directory", NSCocoaError 258). That
+        // stderr is below the `try?` layer and can't be swallowed; CI log parsers
+        // surface it as red annotations. It is not a regression — the test
+        // asserts the fallback succeeds.
         let badPath = FileManager.default.temporaryDirectory
             .appending(path: "lockime-badstore-\(UUID().uuidString)")
         try Data("not a directory".utf8).write(to: badPath)
