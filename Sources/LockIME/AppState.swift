@@ -77,6 +77,10 @@ final class AppState {
     /// User language choice, loaded eagerly so scenes get the right locale.
     private(set) var languagePreference: LanguagePreference = .system
 
+    /// The selected Settings tab. Held here (not as view `@State`) so a feature
+    /// pane can route the user to General's single Accessibility grant.
+    var settingsTab: SettingsTab = .general
+
     /// Master on/off, mirroring `config.isEnabled`.
     var isLocked: Bool { config.isEnabled }
 
@@ -324,8 +328,24 @@ final class AppState {
         commit()
     }
 
+    /// Reconcile the cached flag with the live trust state, reacting to either
+    /// transition. The user may grant while the polling watcher is stopped (e.g.
+    /// after closing the window mid-flow) or entirely out-of-band in System
+    /// Settings, so a refresh that observes a *new* grant must run the same
+    /// completion the watcher would have. A *revoke* is just as important: the
+    /// launcher-overlay observers are now dead, so the engine must detach them
+    /// and clear any stale overlay attribution (otherwise re-granting later
+    /// wouldn't re-attach, and rules could keep resolving against a launcher).
     func refreshAccessibilityStatus() {
-        accessibilityGranted = AXIsProcessTrusted()
+        let trusted = AXIsProcessTrusted()
+        let wasGranted = accessibilityGranted
+        accessibilityGranted = trusted
+        guard trusted != wasGranted else { return }
+        if trusted {
+            handleAccessibilityGranted()
+        } else {
+            engine?.accessibilityDidChange()
+        }
     }
 
     /// Open System Settings with the floating drag helper, then start watching
@@ -351,8 +371,19 @@ final class AppState {
     /// Run when the grant is detected: close the floating helper (the system
     /// never does) and flip the flag so the toggle becomes usable at once.
     private func completeAccessibilityGrant() {
-        permissionFlow.closePanel(returnToPreviousApp: true)
         accessibilityGranted = true
+        handleAccessibilityGranted()
+    }
+
+    /// Run once when the grant is first observed — by the polling watcher *or* a
+    /// status refresh. Closes the floating helper (the system never does), stops
+    /// the now-finished watcher, and attaches the launcher-overlay monitor
+    /// (Spotlight, Raycast, …) which needs the grant to register its observers.
+    /// All three are idempotent, so observing the grant twice is harmless.
+    private func handleAccessibilityGranted() {
+        permissionFlow.closePanel(returnToPreviousApp: true)
+        accessibilityWatcher.stop()
+        engine?.accessibilityDidChange()
     }
 
     #if DEBUG
