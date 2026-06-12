@@ -84,10 +84,26 @@ public final class LockEngine {
 
     /// Apply a configuration: update rules/default, set master enable, and
     /// re-resolve + enforce the appropriate target for the frontmost app.
-    public func apply(_ config: LockConfiguration) {
+    ///
+    /// `reason` attributes the enforcing force to its cause — a config edit
+    /// (`.configChanged`, the default), turning the master toggle on
+    /// (`.lockEngaged`), or the launch/restore apply (`.startupApplied`). It
+    /// flows into both the target re-resolution and the enable-time enforce,
+    /// since whichever fires is the one that emits the activation event.
+    public func apply(_ config: LockConfiguration, reason: ActivationReason = .configChanged) {
         self.config = config
-        reevaluate(reason: .lockEngaged)        // set target (no enforce while disabled)
-        controller.setEnabled(config.isEnabled) // enforce if just enabled
+        // Order matters so disabling is side-effect free. When enabling (or
+        // re-applying while on), set the target first, then enforce. When
+        // disabling, stop enforcing *first* — otherwise reevaluate could force
+        // one last switch under the still-enabled state before the lock turns
+        // off (e.g. the source has drifted off target and the revert is pending).
+        if config.isEnabled {
+            reevaluate(reason: reason)                       // set target
+            controller.setEnabled(true, reason: reason)      // then enforce on enable
+        } else {
+            controller.setEnabled(false, reason: reason)     // stop enforcing first
+            reevaluate(reason: reason)                       // update cached target only
+        }
         updateURLPolling()
         notifyCurrent()
     }
@@ -129,26 +145,46 @@ public final class LockEngine {
     private func handleLauncherChange(_ bundleID: String?) {
         launcherBundleID = bundleID
         onFrontmostChange?(effectiveBundleID)
-        reevaluate(reason: .appActivated)
+        reevaluate(reason: bundleID != nil ? .launcherFocused : .launcherDismissed)
         updateURLPolling()
         notifyCurrent()
     }
 
     private func reevaluate(reason: ActivationReason) {
         let urlMatch = enhancedURLMatch()
-        switch RuleResolver.resolve(config: config, frontmostBundleID: effectiveBundleID, urlMatch: urlMatch) {
-        case .lock(let id):
-            controller.setTarget(id, reason: urlMatch != nil ? .urlMatched : reason)
+        switch RuleResolver.resolve(config: config, frontmostBundleID: effectiveBundleID, urlMatch: urlMatch?.id) {
+        case .lock(let id, let ruleSource):
+            // A URL match outranks a *trigger* reason (app switch, launcher,
+            // poll) — the URL is the why, so log .urlMatched. But an apply-driven
+            // reason (lock engaged / settings changed / startup restore) is the
+            // why itself; keep it, with the URL provenance carried by ruleSource.
+            let effectiveReason: ActivationReason
+            switch reason {
+            case .startupApplied, .lockEngaged, .configChanged:
+                effectiveReason = reason
+            default:
+                effectiveReason = ruleSource == .urlRule ? .urlMatched : reason
+            }
+            controller.setTarget(
+                id,
+                reason: effectiveReason,
+                bundleID: effectiveBundleID,
+                ruleSource: ruleSource,
+                matchedHost: ruleSource == .urlRule ? urlMatch?.host : nil
+            )
         case .ignore, .noTarget:
             controller.setTarget(nil)
         }
     }
 
-    /// The locked source from a matching URL rule, when enhanced mode is on.
-    private func enhancedURLMatch() -> InputSourceID? {
+    /// The locked source and matched host from a URL rule, when enhanced mode is
+    /// on and the current page matches one.
+    private func enhancedURLMatch() -> (id: InputSourceID, host: String)? {
         guard config.enhancedModeEnabled, let urlProvider, !config.urlRules.isEmpty else { return nil }
         let urlString = urlProvider.currentURL(forBundleID: effectiveBundleID) ?? ""
-        return URLMatcher.match(host: URLMatcher.host(from: urlString), rules: config.urlRules)
+        guard let rule = URLMatcher.matchedRule(host: URLMatcher.host(from: urlString), rules: config.urlRules)
+        else { return nil }
+        return (rule.lockedSourceID, rule.hostPattern)
     }
 
     /// Poll the URL only while a browser is frontmost and enhanced mode is on,
@@ -167,8 +203,9 @@ public final class LockEngine {
                 if Task.isCancelled { break }
                 guard let self else { break }
                 // reevaluate() upgrades the reason to .urlMatched when a URL
-                // rule actually matches; otherwise an app/default rule applied.
-                self.reevaluate(reason: .appActivated)
+                // rule actually matches; otherwise this is a periodic re-check
+                // of the app/default rule, not an app switch.
+                self.reevaluate(reason: .urlPolled)
             }
         }
     }
