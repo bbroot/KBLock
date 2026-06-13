@@ -35,6 +35,33 @@ usage() { echo "usage: $(basename "$0") <none|download-fail|extract-fail|success
 [[ $# -eq 1 ]] || usage
 SCENARIO="$1"
 
+load_app_identity() {
+    local app="$1" bundle_id executable_name
+    [[ -d "$app" ]] || return 1
+    bundle_id="$("$PLISTBUDDY" -c "Print :CFBundleIdentifier" "$app/Contents/Info.plist" 2>/dev/null)" || return 1
+    executable_name="$("$PLISTBUDDY" -c "Print :CFBundleExecutable" "$app/Contents/Info.plist" 2>/dev/null)" || return 1
+
+    APP_NAME="$(basename "$app" .app)"
+    BUNDLE_ID="$bundle_id"
+    EXECUTABLE_NAME="$executable_name"
+    RUN_APP="$LAB_DIR/run/$APP_NAME.app"
+}
+
+load_run_copy_identity() {
+    local app
+    shopt -s nullglob
+    local apps=("$LAB_DIR"/run/*.app)
+    shopt -u nullglob
+
+    # `set -u` makes "${apps[@]}" on an empty array fatal in bash 3.2 (macOS's
+    # default), so bail before the loop when run/ holds no app copy.
+    [[ ${#apps[@]} -gt 0 ]] || return 1
+    for app in "${apps[@]}"; do
+        load_app_identity "$app" && return 0
+    done
+    return 1
+}
+
 clear_skip_keys() {
     # Sparkle 2's persisted skip keys (SUConstants.m). A "Skip This Version"
     # click in the lab window writes SUSkippedVersion=209901010101 into the app's
@@ -45,7 +72,12 @@ clear_skip_keys() {
     done
 }
 
-stop_lab() {
+# Tear down the lab server. App-copy cleanup (killing the launched app, clearing
+# its skip keys) runs only with --with-app, i.e. when the caller resolved an
+# identity from the run copy — never against the env-var defaults, which alias
+# the real dev app ("LockIME Dev" / com.oomol.LockIME.dev) and would kill it /
+# clobber its defaults domain. See the stop branch below.
+stop_lab() { # [--with-app]
     if [[ -f "$PID_FILE" ]]; then
         local pid
         pid="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -56,6 +88,8 @@ stop_lab() {
         rm -f "$PID_FILE"
     fi
     pkill -f "update-lab/server.py" 2>/dev/null || true
+
+    [[ "${1:-}" == "--with-app" ]] || return 0
     pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true
     local i=0
     while pgrep -x "$EXECUTABLE_NAME" >/dev/null && [[ $i -lt 50 ]]; do sleep 0.1; i=$((i + 1)); done
@@ -63,7 +97,16 @@ stop_lab() {
 }
 
 if [[ "$SCENARIO" == "stop" ]]; then
-    stop_lab
+    # Kill the launched app copy only when we can identify it from what was
+    # actually staged in run/. With no run copy the identity would be the
+    # env-var defaults, which alias the real dev app — leave it alone rather
+    # than risk killing it. Server teardown and dir cleanup stay unconditional
+    # so `make update-test-stop` is idempotent (safe to re-run when stopped).
+    if load_run_copy_identity; then
+        stop_lab --with-app
+    else
+        stop_lab
+    fi
     rm -rf "$LAB_DIR/run" "$LAB_DIR/payload" "$SERVE_DIR"
     echo "[update-lab] stopped."
     exit 0
@@ -75,10 +118,7 @@ case "$SCENARIO" in
 esac
 
 [[ -d "$APP_SRC" ]] || { echo "error: $APP_SRC not found — run 'make build' first" >&2; exit 1; }
-APP_NAME="$(basename "$APP_SRC" .app)"
-BUNDLE_ID="$("$PLISTBUDDY" -c "Print :CFBundleIdentifier" "$APP_SRC/Contents/Info.plist")"
-EXECUTABLE_NAME="$("$PLISTBUDDY" -c "Print :CFBundleExecutable" "$APP_SRC/Contents/Info.plist")"
-RUN_APP="$LAB_DIR/run/$APP_NAME.app"
+load_app_identity "$APP_SRC" || { echo "error: $APP_SRC has an unreadable Info.plist" >&2; exit 1; }
 
 # The lab hooks are #if DEBUG; a Release binary would silently ignore the
 # loopback feed and poll production with the swapped dev key instead.
@@ -90,7 +130,7 @@ SIGN_UPDATE="$(find "$REPO_ROOT/build/DerivedData/SourcePackages/artifacts" \
 [[ -n "$SIGN_UPDATE" ]] || { echo "error: Sparkle sign_update not found under DerivedData — run 'make build' first" >&2; exit 1; }
 
 echo "[update-lab] scenario: $SCENARIO"
-stop_lab
+stop_lab --with-app
 rm -rf "$SERVE_DIR" "$LAB_DIR/run" "$LAB_DIR/payload" "$LAB_DIR/app.log" "$LAB_DIR/server.log"
 mkdir -p "$SERVE_DIR" "$LAB_DIR/run"
 
