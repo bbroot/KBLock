@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>KBLock Changelog</title>
+    <description>Most recent changes to KBLock</description>
+    <language>en</language>
+    <item>
+      <title>Version 1.0.0</title>
+      <description><![CDATA[
+        <h2>1.0.0</h2>
+        <ul>
+          <li>Initial public release</li>
+          <li>Global lock with LockController state machine</li>
+          <li>Per-app rules with smart suggestions</li>
+          <li>iCloud sync beta</li>
+          <li>Usage statistics</li>
+          <li>Multi-language support (English, 中文, 日本語, 한국어)</li>
+        </ul>
+      ]]></description>
+      <pubDate>Mon, 16 Jun 2026 00:00:00 +0000</pubDate>
+      <enclosure url="https://github.com/bbroot/KBLock/releases/download/v1.0.0/KBLock-1.0.0.pkg" sparkle:version="1.0.0" length="0" type="application/octet-stream" sparkle:edSignature=""/>
+    </item>
+  </channel>
+</rss>
