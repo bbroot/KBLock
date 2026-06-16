@@ -2,23 +2,32 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>KBLock Changelog</title>
-    <description>Most recent changes to KBLock</description>
+    <link>https://bbroot.github.io/KBLock/appcast.xml</link>
+    <description>Most recent changes with links to updates.</description>
     <language>en</language>
     <item>
       <title>Version 1.0.0</title>
-      <description><![CDATA[
-        <h2>1.0.0</h2>
-        <ul>
-          <li>Initial public release</li>
-          <li>Global lock with LockController state machine</li>
-          <li>Per-app rules with smart suggestions</li>
-          <li>iCloud sync beta</li>
-          <li>Usage statistics</li>
-          <li>Multi-language support (English, 中文, 日本語, 한국어)</li>
-        </ul>
-      ]]></description>
-      <pubDate>Mon, 16 Jun 2026 00:00:00 +0000</pubDate>
-      <enclosure url="https://github.com/bbroot/KBLock/releases/download/v1.0.0/KBLock-1.0.0.pkg" sparkle:version="1.0.0" length="0" type="application/octet-stream" sparkle:edSignature=""/>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:edSignature>+o7C8zv+spyhsBYUGAaJm567TDNPhv/Rt7iYW6WG2F/aU1A8peUxq6sbmR6Gov48iBMob1X3R0BISYThpjT1Aw==</sparkle:edSignature>
+      <sparkle:length>4148013</sparkle:length>
+      <enclosure url="https://github.com/bbroot/KBLock/releases/download/v1.0.0/KBLock-1.0.0.pkg" sparkle:edSignature="+o7C8zv+spyhsBYUGAaJm567TDNPhv/Rt7iYW6WG2F/aU1A8peUxq6sbmR6Gov48iBMob1X3R0BISYThpjT1Aw==" length="4148013" type="application/octet-stream" />
+      <description>
+        <![CDATA[
+          <h2>KBLock 1.0.0</h2>
+          <p>Initial public release.</p>
+          <ul>
+            <li><strong>Global lock</strong> — Pin to one input source system-wide</li>
+            <li><strong>Per-app rules</strong> — Auto-lock to a specific source per application</li>
+            <li><strong>Smart suggestions</strong> — Learns your usage and suggests rules</li>
+            <li><strong>iCloud sync</strong> — Your rules synced across all your Macs</li>
+            <li><strong>Usage statistics</strong> — See how much you use each input source</li>
+            <li><strong>Multi-language</strong> — Supports English, 中文, 日本語, 한국어</li>
+          </ul>
+        ]]>
+      </description>
+      <pubDate>Tue, 16 Jun 2026 03:00:00 +0000</pubDate>
     </item>
   </channel>
 </rss>
