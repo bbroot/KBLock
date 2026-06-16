@@ -47,7 +47,7 @@
 	<key>SUFeedURL</key>
 	<string>https://bbroot.github.io/KBLock/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>ngaYZorfyoPCt6A2w7n9XI8z7mNAbqQNDhlZv+qZT/8=</string>
+	<string>CvovhXlXu+Ob2APDapv1nUdiYka2TUcwOxwlfyCr7Ts=</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUScheduledCheckInterval</key>
