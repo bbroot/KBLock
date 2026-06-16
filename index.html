@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KBLock - 锁定你的输入法</title>
+  <style>
+    :root { --bg: #f8f9fa; --text: #1a1a2e; --accent: #4361ee; --card: #fff; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #1a1a2e; --text: #e8e8e8; --accent: #4895ef; --card: #16213e; }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+    .container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+    h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 8px; }
+    h1 span { background: linear-gradient(135deg, #4361ee, #7209b7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .subtitle { font-size: 1.1rem; color: #666; margin-bottom: 40px; }
+    .hero { text-align: center; padding: 60px 0; }
+    .hero img { width: 128px; height: 128px; border-radius: 28px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+    .dl-btn { display: inline-block; padding: 14px 36px; background: var(--accent); color: #fff; border-radius: 12px; text-decoration: none; font-weight: 600; font-size: 1.1rem; margin-top: 20px; transition: transform 0.15s; }
+    .dl-btn:hover { transform: translateY(-2px); }
+    section { margin: 48px 0; }
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 16px; }
+    .features { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .feature { background: var(--card); padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .feature h3 { font-size: 1.05rem; margin-bottom: 6px; }
+    .feature p { font-size: 0.92rem; color: #888; }
+    .faq-item { background: var(--card); padding: 16px 20px; border-radius: 10px; margin-bottom: 12px; }
+    .faq-item h3 { font-size: 1rem; cursor: pointer; }
+    .faq-item p { margin-top: 8px; font-size: 0.92rem; color: #888; }
+    footer { text-align: center; padding: 40px 0; color: #999; font-size: 0.88rem; }
+    footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <img src="icon.png" alt="KBLock">
+      <h1><span>KBLock</span></h1>
+      <p class="subtitle">Take control of your keyboard input source on macOS</p>
+      <a class="dl-btn" href="https://github.com/bbroot/KBLock/releases/latest">Download for macOS</a>
+    </div>
+
+    <section>
+      <h2>Features</h2>
+      <div class="features">
+        <div class="feature"><h3>🔒 Global Lock</h3><p>Pin to one input source system-wide.</p></div>
+        <div class="feature"><h3>📱 Per-App Rules</h3><p>Auto-lock to a specific source per application.</p></div>
+        <div class="feature"><h3>🤖 Smart Suggestions</h3><p>Learns your usage and suggests rules automatically.</p></div>
+        <div class="feature"><h3>☁️ iCloud Sync</h3><p>Your rules synced across all your Macs.</p></div>
+        <div class="feature"><h3>📊 Usage Stats</h3><p>See how much you use each input source.</p></div>
+        <div class="feature"><h3>🌐 Localized</h3><p>Supports English, 中文, 日本語, 한국어.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>FAQ</h2>
+      <div class="faq-item"><h3>What does KBLock do?</h3><p>KBLock is a macOS menu-bar utility that fixes your keyboard input source. If you switch between Chinese and English while typing, KBLock keeps the correct source on for each app — no more typing Chinese in terminals.</p></div>
+      <div class="faq-item"><h3>Is it free?</h3><p>Yes, KBLock is free and open source under the MIT license.</p></div>
+      <div class="faq-item"><h3>Does KBLock send data anywhere?</h3><p>No. All data stays on your device. iCloud sync uses your private iCloud account — we never see your data.</p></div>
+      <div class="faq-item"><h3>What permissions does it need?</h3><p>Accessibility access (to switch your input source). That's it.</p></div>
+      <div class="faq-item"><h3>Requirements?</h3><p>macOS 14 Sonoma or later. Apple Silicon and Intel both supported.</p></div>
+    </section>
+
+    <section>
+      <h2>Support</h2>
+      <p>For issues, feature requests, or questions, please visit the <a href="https://github.com/bbroot/KBLock/issues">GitHub Issues</a> page or email <a href="mailto:bbroot@live.cn">bbroot@live.cn</a>.</p>
+    </section>
+
+    <section>
+      <h2>Privacy Policy</h2>
+      <div class="faq-item">
+        <p><strong>KBLock Privacy Policy</strong></p>
+        <p>KBLock does not collect, transmit, or store any personal data. All application data (rules, settings, usage statistics) is stored locally on your device. If you enable iCloud Sync, data is synchronized through your personal iCloud account using NSUbiquitousKeyValueStore — no external servers are involved. The application does not contain any analytics SDK, tracking code, or telemetry. Accessibility access is used solely for switching keyboard input sources on your local machine.</p>
+      </div>
+    </section>
+
+    <footer>
+      <p><a href="https://github.com/bbroot/KBLock">GitHub</a> &middot; <a href="mailto:bbroot@live.cn">Contact</a></p>
+      <p>&copy; 2026 bbroot</p>
+    </footer>
+  </div>
+</body>
+</html>
