@@ -26,9 +26,7 @@ settings:
     GCC_WARN_UNINITIALIZED_AUTOS: YES
     CLANG_WARN_DOCUMENTATION_COMMENTS: NO
     # Local builds are always 0.0.0-development; CI overrides both values at
-    # archive time (version from git tags, build number date-stamped — see
-    # .github/workflows/build-publish.yml and scripts/ci/compute_version.sh).
-    MARKETING_VERSION: "0.0.0-development"
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
     ONLY_ACTIVE_ARCH: YES
     # Single-arch by design — we ship one app per architecture, never a
@@ -99,7 +97,7 @@ targets:
           ENABLE_HARDENED_RUNTIME: NO
         Release:
           CODE_SIGN_IDENTITY: "Developer ID Application"
-          DEVELOPMENT_TEAM: PWJ9VF7HHT
+          DEVELOPMENT_TEAM: 2X3285DG44
     postBuildScripts:
       # Sparkle ships as a fat (arm64 + x86_64) xcframework; since we ship
       # single-arch apps, strip the unused slice and re-sign (saves ~1.4 MB).
