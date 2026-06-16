@@ -3,7 +3,7 @@
 #
 # We ship one app per architecture (never universal — download size), but
 # Sparkle's SPM artifact is a prebuilt fat xcframework (arm64 + x86_64) and
-# Xcode embeds prebuilt binaries as-is — a single-arch LockIME would still
+# Xcode embeds prebuilt binaries as-is — a single-arch KBLock would still
 # carry both Sparkle slices (~2.8 MB instead of ~1.4 MB). This post-build
 # phase (wired up in project.yml) strips every embedded Mach-O down to $ARCHS
 # and re-signs what it modified, innermost code first, per Sparkle's own

@@ -1,4 +1,4 @@
-// MakeTrayIcon.swift — renders LockIME's menu-bar (tray) template glyphs:
+// MakeTrayIcon.swift — renders KBLock's menu-bar (tray) template glyphs:
 // a keyboard with a small padlock badge at the top-right corner. Locked shows
 // a closed shackle; unlocked pops the shackle open. Drawn vector-crisp with
 // CoreGraphics at 1x/2x — solid black + alpha, for template rendering.

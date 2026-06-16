@@ -1,0 +1,617 @@
+import AppKit
+import ApplicationServices
+import Foundation
+import KeyboardShortcuts
+import KBLockKit
+import Observation
+import PermissionFlow
+import SwiftData
+import SwiftUI
+
+/// Notification posted on the main thread when a cloud-synced config arrives.
+extension Notification.Name {
+    static let cloudConfigDidChange = Notification.Name("KBLockCloudConfigDidChange")
+}
+
+/// Top-level observable UI state, backed by the `LockEngine` and persisted
+/// `LockConfiguration`.
+@MainActor
+@Observable
+final class AppState {
+    private(set) var config: LockConfiguration = .default
+    private(set) var activationCount: Int = 0
+    private(set) var currentSourceName: String = "—"
+    private(set) var frontmostBundleID: String?
+    private(set) var availableSources: [InputSource] = []
+    private(set) var loginItemState: LoginItemState = .unknown
+    private(set) var accessibilityGranted: Bool = false
+
+    /// The configured global toggle-lock shortcut, mirrored as observable state
+    /// so the menu-bar header re-renders the moment the user binds or clears it
+    /// in Settings (a plain `getShortcut` read isn't tracked by `@Observable`).
+    private(set) var toggleLockShortcut: KeyboardShortcuts.Shortcut?
+
+    let updateController = UpdateController()
+
+    /// About window, hosted in AppKit so it reliably comes to the foreground.
+    @ObservationIgnored private lazy var aboutWindow = HostedWindowController(
+        id: "about",
+        title: { [weak self] in self?.loc("About KBLock") ?? "About KBLock" },
+        styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+        transparentTitleBar: true
+    ) { [weak self] in
+        guard let self else { return AnyView(EmptyView()) }
+        return AnyView(self.localizedRoot { AboutView() })
+    }
+
+    /// Update window, only shown when an update is actually available.
+    @ObservationIgnored private lazy var updateWindow = HostedWindowController(
+        id: "update",
+        title: { [weak self] in self?.loc("Updates") ?? "Updates" },
+        onClose: { [weak self] in self?.updateController.model.dismissReply() }
+    ) { [weak self] in
+        guard let self else { return AnyView(EmptyView()) }
+        return AnyView(self.localizedRoot { UpdateWindowView() })
+    }
+
+    @ObservationIgnored private let store = RuleStore()
+    @ObservationIgnored private let activationStore = ActivationCountStore()
+    @ObservationIgnored private let loginItem = LoginItemController()
+    @ObservationIgnored let logStore = LogStore()
+    @ObservationIgnored let usageStats = UsageStatsStore()
+    @ObservationIgnored private(set) lazy var cloudSync = CloudSyncService(ruleStore: store)
+    @ObservationIgnored private var engine: LockEngine?
+    @ObservationIgnored private var purgeTask: Task<Void, Never>?
+    @ObservationIgnored private var snapshotTask: Task<Void, Never>?
+    @ObservationIgnored private var shortcutObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var cloudObserver: (any NSObjectProtocol)?
+
+    /// KeyboardShortcuts posts this (internal) notification whenever a name's
+    /// shortcut is set or cleared. It isn't public, so observe it by its raw
+    /// string — the same way the library's own `NSMenuItem` helper does.
+    @ObservationIgnored private static let shortcutChanged =
+        Notification.Name("KeyboardShortcuts_shortcutByNameDidChange")
+
+    /// Guides the user to grant Accessibility access via the floating drag
+    /// helper. Created lazily so it does no work until the user actually
+    /// requests access.
+    @ObservationIgnored private lazy var permissionFlow = PermissionFlowController(
+        configuration: .init(promptForAccessibilityTrust: false)
+    )
+
+    /// Polls for the Accessibility grant after a request. macOS doesn't notify
+    /// us when access is allowed, so we watch `AXIsProcessTrusted()` ourselves.
+    @ObservationIgnored private let accessibilityWatcher = AccessibilityGrantWatcher()
+
+    /// User language choice, loaded eagerly so scenes get the right locale.
+    private(set) var languagePreference: LanguagePreference = .system
+
+    /// The selected Settings tab. Held here (not as view `@State`) so a feature
+    /// pane can route the user to General's single Accessibility grant.
+    var settingsTab: SettingsTab = .general
+
+    /// Master on/off, mirroring `config.isEnabled`.
+    var isLocked: Bool { config.isEnabled }
+
+    /// The SwiftData container backing the activation log (for `.modelContainer`).
+    var modelContainer: ModelContainer { logStore.container }
+
+    /// The locale to inject into every scene root.
+    var locale: Locale { Locale(identifier: languagePreference.effectiveLanguage.localeIdentifier) }
+    var localeIdentifier: String { languagePreference.effectiveLanguage.localeIdentifier }
+
+    init() {
+        languagePreference = .load()
+        ThirdPartyBundleLocalization.apply(language: languagePreference.effectiveLanguage)
+    }
+
+    func setLanguagePreference(_ preference: LanguagePreference) {
+        languagePreference = preference
+        preference.save()
+        ThirdPartyBundleLocalization.apply(language: preference.effectiveLanguage)
+        // Hosted-window *content* re-localizes via observation, but the AppKit
+        // window titles are plain strings that need an explicit refresh.
+        aboutWindow.refreshTitle()
+        updateWindow.refreshTitle()
+    }
+
+    /// Build and start the engine. Called once at launch from the app delegate.
+    func start() {
+        guard engine == nil else { return }
+        config = store.load()
+        activationCount = activationStore.count
+
+        let engine = LockEngine()
+        self.engine = engine
+        accessibilityGranted = AXIsProcessTrusted()
+        engine.onActivation = { [weak self] event in
+            guard let self else { return }
+            self.activationCount = self.activationStore.increment()
+            // Resolve the triggering app's display name here (AppKit lives in
+            // the app, not the kit) so the log row keeps it even after that app
+            // quits. App names are proper nouns shown verbatim — the same
+            // treatment as the rules UI (AppRow) and the input-source column —
+            // not catalog strings, so they bypass the in-app language override.
+            let appName = event.triggeringBundleID.map(AppDisplay.name(for:))
+            self.logStore.record(event, triggeringAppName: appName)
+            // Record usage stats for smart suggestions.
+            if let bundleID = event.triggeringBundleID {
+                self.usageStats.record(
+                    bundleID: bundleID,
+                    sourceID: event.inputSource.rawValue,
+                    sourceName: event.inputSourceName
+                )
+            }
+        }
+        engine.onCurrentSourceChange = { [weak self] name in
+            self?.currentSourceName = name
+        }
+        engine.onFrontmostChange = { [weak self] bundleID in
+            self?.frontmostBundleID = bundleID
+        }
+        // Keep the tray switcher and Settings pickers in sync when the user
+        // adds or removes an input source in System Settings while we run.
+        engine.onSelectableSourcesChange = { [weak self] sources in
+            self?.availableSources = sources
+        }
+        engine.start()
+
+        availableSources = engine.selectableSources()
+        // First run: default the global lock to the currently active source.
+        if config.defaultSourceID == nil, let current = engine.currentSourceID() {
+            config.defaultSourceID = current
+        }
+        engine.apply(config, reason: .startupApplied)
+        store.save(config)
+
+        loginItemState = loginItem.state
+        updateController.onPresentUpdateWindow = { [weak self] in self?.updateWindow.show() }
+        updateController.onCheckOutcome = { [weak self] outcome in self?.presentUpdateOutcome(outcome) }
+        updateController.start()
+
+        // Global toggle-lock shortcut.
+        KeyboardShortcuts.onKeyUp(for: .toggleLock) { [weak self] in
+            guard let self else { return }
+            self.setMasterEnabled(!self.isLocked)
+        }
+
+        // Global "lock to previous/next source" — cycle the global target
+        // through the input-source list (wrapping), turning locking on.
+        KeyboardShortcuts.onKeyUp(for: .globalPreviousSource) { [weak self] in
+            self?.cycleGlobalSource(.previous)
+        }
+        KeyboardShortcuts.onKeyUp(for: .globalNextSource) { [weak self] in
+            self?.cycleGlobalSource(.next)
+        }
+
+        // Frontmost-app "lock to previous/next source" — cycle that app's own
+        // rule. No rule for the frontmost app ⇒ nothing happens.
+        KeyboardShortcuts.onKeyUp(for: .appPreviousSource) { [weak self] in
+            self?.cycleFrontmostAppSource(.previous)
+        }
+        KeyboardShortcuts.onKeyUp(for: .appNextSource) { [weak self] in
+            self?.cycleFrontmostAppSource(.next)
+        }
+
+        // Frontmost-app "remove rule" — drop that app's rule. No rule ⇒ no-op.
+        KeyboardShortcuts.onKeyUp(for: .removeFrontmostAppRule) { [weak self] in
+            self?.removeFrontmostAppRule()
+        }
+
+        // Mirror the configured shortcut into observable state, and keep it in
+        // sync so the menu header reflects binds/clears made in Settings live.
+        toggleLockShortcut = KeyboardShortcuts.getShortcut(for: .toggleLock)
+        shortcutObserver = NotificationCenter.default.addObserver(
+            forName: Self.shortcutChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.toggleLockShortcut = KeyboardShortcuts.getShortcut(for: .toggleLock)
+            }
+        }
+
+        // Purge the 24h log now and hourly thereafter.
+        logStore.purgeExpired()
+        purgeTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3600))
+                if Task.isCancelled { break }
+                self?.logStore.purgeExpired()
+            }
+        }
+
+        // Passive usage snapshot every 60 seconds: records the current
+        // (frontmost app, active source) pair for smart suggestion stats.
+        snapshotTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                if Task.isCancelled { break }
+                guard let self, let bid = self.frontmostBundleID,
+                      let srcID = self.engine?.currentSourceID(),
+                      let srcName = self.engine?.currentSourceName()
+                else { continue }
+                self.usageStats.record(bundleID: bid, sourceID: srcID.rawValue, sourceName: srcName)
+            }
+        }
+
+        // iCloud sync: push on config changes, listen for external changes.
+        setupCloudSync()
+    }
+
+    /// Tear down observers and the purge loop for a clean shutdown.
+    func stop() {
+        engine?.stop()
+        purgeTask?.cancel()
+        purgeTask = nil
+        snapshotTask?.cancel()
+        snapshotTask = nil
+        accessibilityWatcher.stop()
+        if let shortcutObserver {
+            NotificationCenter.default.removeObserver(shortcutObserver)
+            self.shortcutObserver = nil
+        }
+        if let cloudObserver {
+            NotificationCenter.default.removeObserver(cloudObserver)
+            self.cloudObserver = nil
+        }
+    }
+
+    deinit {
+        purgeTask?.cancel()
+        // The shortcut observer is torn down in `stop()`; a nonisolated deinit
+        // can't touch the non-Sendable token, and it captures `self` weakly so a
+        // lingering registration is harmless (AppState lives for the app's life).
+    }
+
+    func purgeLog() {
+        logStore.purgeExpired()
+    }
+
+    // MARK: - Mutations (each persists + re-applies)
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        _ = loginItem.setEnabled(enabled)
+        loginItemState = loginItem.state
+    }
+
+    func refreshLoginItemState() {
+        loginItemState = loginItem.state
+    }
+
+    func setMasterEnabled(_ on: Bool) {
+        config.isEnabled = on
+        commit(reason: .lockEngaged)
+    }
+
+    func setDefaultSource(_ id: InputSourceID?) {
+        config.defaultSourceID = id
+        commit()
+    }
+
+    /// Lock to a specific source from the menu bar: make it the global target
+    /// and turn locking on in a single commit. Clicking the already-locked
+    /// source instead disables locking via `setMasterEnabled(false)`.
+    func lockToSource(_ id: InputSourceID) {
+        config.defaultSourceID = id
+        config.isEnabled = true
+        commit(reason: .lockEngaged)
+    }
+
+    // MARK: - Shortcut-driven source cycling
+
+    /// Lock the *global* target to the previous/next input source in the list,
+    /// wrapping around the ends, and turn locking on — the same write path as
+    /// `lockToSource`. Never lands on "none", and does nothing when fewer than
+    /// two input sources are installed (there's nowhere to cycle).
+    func cycleGlobalSource(_ direction: CycleDirection) {
+        let reference = config.defaultSourceID ?? engine?.currentSourceID()
+        guard let next = SourceCycler.step(
+            from: reference, in: availableSources.map(\.id), direction: direction
+        ) else { return }
+        config.defaultSourceID = next
+        config.isEnabled = true
+        commit(reason: .lockEngaged)
+    }
+
+    /// Lock the *frontmost app's* rule to the previous/next input source,
+    /// scoped to that app. Does nothing when the frontmost app has no rule of
+    /// its own, and never lands on "none" (it pins the rule to a valid source).
+    func cycleFrontmostAppSource(_ direction: CycleDirection) {
+        guard let bundleID = frontmostApplicationBundleID,
+              var rule = config.rule(for: bundleID)
+        else { return }
+        let reference = rule.lockedSourceID ?? engine?.currentSourceID()
+        guard let next = SourceCycler.step(
+            from: reference, in: availableSources.map(\.id), direction: direction
+        ) else { return }
+        rule.mode = .locked
+        rule.lockedSourceID = next
+        upsertRule(rule)
+    }
+
+    /// Remove the rule bound to the frontmost app. Does nothing when that app
+    /// has no rule, so pressing it in an unconfigured app is harmless.
+    func removeFrontmostAppRule() {
+        guard let bundleID = frontmostApplicationBundleID,
+              config.rule(for: bundleID) != nil
+        else { return }
+        removeRule(bundleID: bundleID)
+    }
+
+    /// The app the user is actually looking at when a global shortcut fires.
+    /// Read fresh from `NSWorkspace` rather than the mirrored `frontmostBundleID`
+    /// (which only updates on the *next* activation, so it can be stale or nil
+    /// right after launch) — a global hotkey doesn't steal focus, so this is the
+    /// same app the engine resolves rules against.
+    private var frontmostApplicationBundleID: String? {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
+
+    func upsertRule(_ rule: AppRule) {
+        config.appRules.removeAll { $0.bundleID == rule.bundleID }
+        config.appRules.append(rule)
+        config.appRules.sort { $0.bundleID < $1.bundleID }
+        commit()
+    }
+
+    func removeRule(bundleID: String) {
+        config.appRules.removeAll { $0.bundleID == bundleID }
+        commit()
+    }
+
+
+
+    /// Reconcile the cached flag with the live trust state, reacting to either
+    /// transition. The user may grant while the polling watcher is stopped (e.g.
+    /// after closing the window mid-flow) or entirely out-of-band in System
+    /// Settings, so a refresh that observes a *new* grant must run the same
+    /// completion the watcher would have. A *revoke* is just as important: the
+    /// launcher-overlay observers are now dead, so the engine must detach them
+    /// and clear any stale overlay attribution (otherwise re-granting later
+    /// wouldn't re-attach, and rules could keep resolving against a launcher).
+    func refreshAccessibilityStatus() {
+        let trusted = AXIsProcessTrusted()
+        let wasGranted = accessibilityGranted
+        accessibilityGranted = trusted
+        guard trusted != wasGranted else { return }
+        if trusted {
+            handleAccessibilityGranted()
+        } else {
+            engine?.accessibilityDidChange()
+        }
+    }
+
+    /// Open System Settings with the floating drag helper, then start watching
+    /// for the grant. The moment access is allowed we close the helper panel
+    /// (the system never does) and flip `accessibilityGranted`, so the toggle
+    /// becomes usable without the user having to switch tabs.
+    func requestAccessibilityAccess(localeIdentifier: String?, suggestedAppURLs: [URL], sourceFrame: CGRect) {
+        permissionFlow.setLocaleIdentifier(localeIdentifier)
+        permissionFlow.authorize(
+            pane: .accessibility,
+            suggestedAppURLs: suggestedAppURLs,
+            sourceFrameInScreen: sourceFrame
+        )
+        accessibilityWatcher.start { [weak self] in self?.completeAccessibilityGrant() }
+    }
+
+    /// Stop watching for the grant (e.g. when the pane disappears) so an
+    /// abandoned request doesn't keep polling in the background.
+    func stopAccessibilityWatch() {
+        accessibilityWatcher.stop()
+    }
+
+    /// Run when the grant is detected: close the floating helper (the system
+    /// never does) and flip the flag so the toggle becomes usable at once.
+    private func completeAccessibilityGrant() {
+        accessibilityGranted = true
+        handleAccessibilityGranted()
+    }
+
+    /// Run once when the grant is first observed — by the polling watcher *or* a
+    /// status refresh. Closes the floating helper (the system never does), stops
+    /// the now-finished watcher, and attaches the launcher-overlay monitor
+    /// (Spotlight, Raycast, …) which needs the grant to register its observers.
+    /// All three are idempotent, so observing the grant twice is harmless.
+    private func handleAccessibilityGranted() {
+        permissionFlow.closePanel(returnToPreviousApp: true)
+        accessibilityWatcher.stop()
+        engine?.accessibilityDidChange()
+    }
+
+    #if DEBUG
+    /// In-process end-to-end self-test for the Accessibility grant UX, run via
+    /// `KBLOCK_AXFLOW_TEST=1`. It shows the REAL floating helper panel and runs
+    /// the REAL grant reaction, then observes the two user-facing artifacts
+    /// directly in this live app process: the helper panel window disappears
+    /// (problem ①) and `accessibilityGranted` — the value the toggle's
+    /// `.disabled` reads — flips true (problem ②). Only the trust *signal* is
+    /// simulated, because granting Accessibility is SIP-protected and GUI-only;
+    /// every reaction the app performs is the real production code path.
+    func runAccessibilityGrantSelfTest() async {
+        func visibleHelperPanels() -> Int {
+            NSApp.windows.filter {
+                String(describing: type(of: $0)).contains("FloatingDropPanel") && $0.isVisible
+            }.count
+        }
+
+        accessibilityGranted = false
+        print("AXFLOW: start — visible helper panels=\(visibleHelperPanels()), accessibilityGranted=\(accessibilityGranted)")
+
+        // 1) Show the real helper panel — the window the user sees and that, in
+        //    the bug report, refused to disappear.
+        permissionFlow.showPanel()
+        try? await Task.sleep(for: .milliseconds(400))
+        let shown = visibleHelperPanels()
+        print("AXFLOW: after showPanel() — visible helper panels=\(shown)")
+
+        // 2) Run the real reaction to a detected grant.
+        completeAccessibilityGrant()
+        try? await Task.sleep(for: .milliseconds(400))
+        let remaining = visibleHelperPanels()
+        print("AXFLOW: after grant reaction — visible helper panels=\(remaining), accessibilityGranted=\(accessibilityGranted)")
+
+        let panelClosed = shown >= 1 && remaining == 0
+        let toggleEnabled = accessibilityGranted
+        print("AXFLOW: problem①(helper panel disappears on grant) = \(panelClosed ? "PASS" : "FAIL")")
+        print("AXFLOW: problem②(toggle becomes enabled on grant)  = \(toggleEnabled ? "PASS" : "FAIL")")
+        print("AXFLOW: \(panelClosed && toggleEnabled ? "ALL PASS" : "FAILED")")
+    }
+    #endif
+
+    func refreshSources() {
+        if let engine { availableSources = engine.selectableSources() }
+    }
+
+    /// Persist + re-apply the config. `reason` attributes any resulting forced
+    /// switch in the activation log: a config edit (the default) vs the master
+    /// lock being engaged (menu toggle / lock-to-source / hotkey cycling).
+    private func commit(reason: ActivationReason = .configChanged) {
+        engine?.apply(config, reason: reason)
+        store.save(config)
+        cloudSync.push(config: config)
+    }
+
+    // MARK: - Backup (export / import)
+
+    /// Snapshot the portable configuration (rules + binding intent) into a
+    /// backup envelope, capturing the current display name of every installed
+    /// source so a target machine missing one can still show a label. Per-device
+    /// runtime state (master lock, enhanced mode, language, login item) is not
+    /// included — see `ConfigBackup.make`.
+    func makeBackup() -> ConfigBackup {
+        var names: [InputSourceID: String] = [:]
+        for source in availableSources { names[source.id] = source.localizedName }
+        return ConfigBackup.make(from: config, appVersion: Bundle.main.shortVersion, sourceNames: names)
+    }
+
+    /// Read and version-gate a backup file, building an in-memory staging plan
+    /// diffed against the live configuration and installed sources. **Nothing is
+    /// persisted here** — the plan is editable and only `applyImport` commits.
+    func loadImportPlan(from url: URL) -> Result<ImportPlan, BackupReadError> {
+        guard let data = try? Data(contentsOf: url) else { return .failure(.unreadable) }
+        switch ConfigBackup.read(data) {
+        case .success(let backup):
+            return .success(ImportPlan(current: config, backup: backup, installedSources: availableSources))
+        case .failure(let error):
+            return .failure(error)
+        }
+    }
+
+    /// Commit a staging plan: fold it into the configuration, persist, and
+    /// re-apply the engine. The only state-changing step of the whole import.
+    @discardableResult
+    func applyImport(_ plan: ImportPlan) -> ImportOutcome {
+        let outcome = plan.outcome()
+        config = plan.resolvedConfiguration()
+        commit(reason: .configChanged)
+        return outcome
+    }
+
+    // MARK: - Windows & update presentation
+
+    /// Bring the About window to the foreground (creating it on first use).
+    func showAbout() {
+        aboutWindow.show()
+    }
+
+    /// Quit the app. Wrapping `NSApp.terminate(nil)` in a custom method
+    /// prevents AppKit's auto-title-rewriting that would append the app name
+    /// to the Quit menu item (e.g. "退出" → "退出 KBLock Dev").
+    func quit() {
+        NSApp.terminate(nil)
+    }
+
+
+    /// A user-initiated update check. The window only opens if an update is
+    /// found; otherwise the result shows as a toast (see `presentUpdateOutcome`).
+    func checkForUpdates() {
+        updateController.checkForUpdates()
+    }
+
+    /// Surface a finished user-initiated check as a native, fully appearance-
+    /// adaptive alert (replacing the old off-brand center-screen toast).
+    private func presentUpdateOutcome(_ outcome: UpdateCheckOutcome) {
+        let alert = NSAlert()
+        alert.icon = .kbLockAppIconRounded
+        switch outcome {
+        case .upToDate:
+            alert.alertStyle = .informational
+            alert.messageText = loc("You're up to date.")
+            alert.informativeText = loc(
+                "KBLock %@ is currently the newest version available.",
+                Bundle.main.shortVersion
+            )
+        case .failed(let failure):
+            alert.alertStyle = .warning
+            alert.messageText = loc("Update failed")
+            alert.informativeText = loc(failure.messageKey)
+        #if DEBUG
+        case .disabledInDevelopment:
+            alert.alertStyle = .informational
+            alert.messageText = loc("Development build")
+            alert.informativeText = loc("Automatic updates are disabled in development builds. To test the update flow, use the make update-test-* lab.")
+        #endif
+        }
+        alert.addButton(withTitle: loc("OK"))
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    /// Resolve a string in the app's chosen language for AppKit surfaces
+    /// (NSAlert, window titles) that don't get SwiftUI's `\.locale`.
+    // MARK: - iCloud Sync
+
+    private func setupCloudSync() {
+        // Initial pull: if remote data is fresher, apply and reload.
+        if cloudSync.pullIfNewer() {
+            config = store.load()
+            engine?.apply(config, reason: .startupApplied)
+        }
+
+        cloudSync.onRemoteUpdate = { [weak self] newConfig in
+            guard let self else { return }
+            self.config = newConfig
+            self.engine?.apply(newConfig, reason: .startupApplied)
+            NotificationCenter.default.post(name: .cloudConfigDidChange, object: nil)
+        }
+
+        cloudObserver = NotificationCenter.default.addObserver(
+            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: NSUbiquitousKeyValueStore.default,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.cloudSync.handleRemoteChange()
+        }
+    }
+
+    func loc(_ key: String) -> String {
+        AppKitStrings.string(key, language: languagePreference.effectiveLanguage)
+    }
+
+    func loc(_ key: String, _ arguments: CVarArg...) -> String {
+        String(format: loc(key), arguments: arguments)
+    }
+
+    /// Wrap a window's root view with the shared state and chosen locale so its
+    /// strings resolve live, mirroring the scene-level `localized(with:)` helper.
+    private func localizedRoot<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        LocalizedHostedRoot(appState: self, content: content())
+    }
+}
+
+/// Root wrapper for AppKit-hosted windows. The hosting controller's root view
+/// is built exactly once, so the locale must be applied *inside a view body*
+/// (where observation tracks the language preference) rather than baked in at
+/// creation — otherwise an open or reopened window keeps its original language.
+private struct LocalizedHostedRoot<Content: View>: View {
+    let appState: AppState
+    let content: Content
+
+    var body: some View {
+        content
+            .environment(appState)
+            .environment(\.locale, appState.locale)
+            .id(appState.localeIdentifier)
+    }
+}
